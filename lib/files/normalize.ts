@@ -53,6 +53,53 @@ export async function normalizeImages(files: File[]): Promise<{
       })
     }
   }
-  
+
+  // Check total payload size and compress further if needed for Vercel limits (4.5MB)
+  const totalSize = images.reduce((sum, img) => sum + img.buffer.length, 0)
+  const maxPayloadSize = 4 * 1024 * 1024 // 4MB to be safe
+
+  if (totalSize > maxPayloadSize) {
+    console.log(`Total payload ${(totalSize / 1024 / 1024).toFixed(1)}MB exceeds limit, applying aggressive compression...`)
+
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i]
+      const targetSize = Math.floor(maxPayloadSize / images.length * 0.8) // Target 80% of available per image
+
+      let quality = 0.5
+      let dimension = 1000
+
+      while (image.buffer.length > targetSize && quality > 0.2) {
+        try {
+          const compressedBuffer = await sharp(image.buffer)
+            .jpeg({ quality: Math.round(quality * 100) })
+            .resize({
+              width: dimension,
+              height: dimension,
+              fit: 'inside',
+              withoutEnlargement: true
+            })
+            .toBuffer()
+
+          if (compressedBuffer.length < targetSize || quality <= 0.2) {
+            image.buffer = compressedBuffer
+            break
+          }
+
+          quality -= 0.1
+          if (quality <= 0.3) {
+            dimension = Math.max(800, dimension - 200)
+          }
+
+        } catch (error) {
+          console.error(`Failed to compress image ${image.originalName}:`, error)
+          break
+        }
+      }
+    }
+
+    const newTotalSize = images.reduce((sum, img) => sum + img.buffer.length, 0)
+    console.log(`Compressed payload from ${(totalSize / 1024 / 1024).toFixed(1)}MB to ${(newTotalSize / 1024 / 1024).toFixed(1)}MB`)
+  }
+
   return { images, failed }
 }
