@@ -20,8 +20,9 @@ export async function POST(request: NextRequest) {
       const sizeMB = parseInt(contentLength) / (1024 * 1024)
       console.log(`Request Content-Length: ${sizeMB.toFixed(2)}MB`)
 
-      if (sizeMB > 4.5) {
-        console.error(`⚠️ Request size ${sizeMB.toFixed(2)}MB exceeds platform limit of 4.5MB`)
+      // Railway has more generous limits than Vercel
+      if (sizeMB > 10) {
+        console.error(`⚠️ Request size ${sizeMB.toFixed(2)}MB exceeds Railway estimated limit of 10MB`)
         return new Response('Request too large', { status: 413 })
       }
     }

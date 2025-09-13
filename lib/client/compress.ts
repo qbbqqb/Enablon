@@ -7,7 +7,7 @@ export interface CompressedFile {
   compressionRatio: number
 }
 
-export async function compressImageFile(file: File, targetSizeKB: number = 300): Promise<CompressedFile> {
+export async function compressImageFile(file: File, targetSizeKB: number = 600): Promise<CompressedFile> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     const canvas = document.createElement('canvas')
@@ -20,7 +20,7 @@ export async function compressImageFile(file: File, targetSizeKB: number = 300):
 
     img.onload = () => {
       // Calculate dimensions to fit within limits while maintaining aspect ratio
-      const maxDimension = 600 // Very conservative for client-side
+      const maxDimension = 1000 // Railway-optimized: higher resolution
       const scale = Math.min(maxDimension / img.width, maxDimension / img.height, 1)
 
       canvas.width = Math.round(img.width * scale)
@@ -29,8 +29,8 @@ export async function compressImageFile(file: File, targetSizeKB: number = 300):
       // Draw and compress
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
-      // Start with very aggressive compression
-      let quality = 0.2
+      // Start with moderate compression for better quality
+      let quality = 0.6
       const tryCompress = () => {
         canvas.toBlob((blob) => {
           if (!blob) {
@@ -41,7 +41,7 @@ export async function compressImageFile(file: File, targetSizeKB: number = 300):
           const compressedSize = blob.size
           const targetSize = targetSizeKB * 1024
 
-          if (compressedSize <= targetSize || quality <= 0.1) {
+          if (compressedSize <= targetSize || quality <= 0.3) {
             // Create a new File from the blob
             const compressedFile = new File([blob], file.name, {
               type: 'image/jpeg',
@@ -55,8 +55,8 @@ export async function compressImageFile(file: File, targetSizeKB: number = 300):
               compressionRatio: file.size / compressedFile.size
             })
           } else {
-            // Try with lower quality
-            quality -= 0.05
+            // Try with lower quality (gentler reduction)
+            quality -= 0.1
             tryCompress()
           }
         }, 'image/jpeg', quality)
@@ -73,7 +73,7 @@ export async function compressImageFile(file: File, targetSizeKB: number = 300):
   })
 }
 
-export async function compressFileBatch(files: File[], targetBatchSizeMB: number = 2): Promise<CompressedFile[]> {
+export async function compressFileBatch(files: File[], targetBatchSizeMB: number = 4): Promise<CompressedFile[]> {
   const targetSizePerFileKB = Math.floor((targetBatchSizeMB * 1024) / files.length)
   const compressed: CompressedFile[] = []
 

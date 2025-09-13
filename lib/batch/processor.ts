@@ -18,8 +18,8 @@ interface FileBatch {
 }
 
 export const BATCH_CONFIG: BatchConfig = {
-  maxFilesPerBatch: 3, // Ultra conservative for reliable upload
-  maxSizePerBatch: 8 * 1024 * 1024, // 8MB raw (should compress to <2MB)
+  maxFilesPerBatch: 6, // Railway-optimized: more files per batch
+  maxSizePerBatch: 15 * 1024 * 1024, // Railway-optimized: 15MB raw (should compress to ~4-5MB)
 }
 
 export function createBatches(files: File[]): FileBatch[] {

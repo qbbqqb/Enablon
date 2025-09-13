@@ -80,13 +80,13 @@ export async function normalizeImages(files: any[]): Promise<{
     }
   }
 
-  // ALWAYS apply aggressive compression for Vercel deployment
+  // Apply moderate compression for Railway deployment
   const totalSize = images.reduce((sum, img) => sum + img.buffer.length, 0)
-  const maxPayloadSize = 3 * 1024 * 1024 // 3MB to be very safe for Vercel
+  const maxPayloadSize = 8 * 1024 * 1024 // 8MB target for Railway (more generous than Vercel)
 
   console.log(`Initial payload: ${(totalSize / 1024 / 1024).toFixed(2)}MB with ${images.length} images`)
 
-  // Always compress aggressively for Vercel deployment
+  // Compress moderately for Railway deployment (better quality than Vercel settings)
   for (let i = 0; i < images.length; i++) {
     const image = images[i]
     const originalSize = image.buffer.length
@@ -94,14 +94,14 @@ export async function normalizeImages(files: any[]): Promise<{
 
     console.log(`Compressing image ${i + 1}/${images.length}: ${image.originalName} (${(originalSize / 1024).toFixed(0)}KB → target: ${(targetSize / 1024).toFixed(0)}KB)`)
 
-    // Start with very aggressive settings for Vercel
-    let quality = 0.3
-    let dimension = 600
+    // Start with moderate settings for Railway
+    let quality = 0.5
+    let dimension = 900
 
-    // If image is already small enough, still compress but less aggressively
+    // If image is already small enough, use higher quality
     if (originalSize <= targetSize) {
-      quality = 0.5
-      dimension = 800
+      quality = 0.7
+      dimension = 1000
     }
 
     let attempts = 0
@@ -131,9 +131,9 @@ export async function normalizeImages(files: any[]): Promise<{
           break
         }
 
-        // More aggressive reduction
-        quality = Math.max(0.15, quality - 0.05)
-        dimension = Math.max(400, dimension - 100)
+        // More gentle reduction for better quality
+        quality = Math.max(0.25, quality - 0.08)
+        dimension = Math.max(600, dimension - 80)
         attempts++
 
       } catch (error) {
@@ -149,7 +149,7 @@ export async function normalizeImages(files: any[]): Promise<{
   console.log(`Final payload: ${(finalTotalSize / 1024 / 1024).toFixed(2)}MB (reduction: ${(((totalSize - finalTotalSize) / totalSize) * 100).toFixed(1)}%)`)
 
   if (finalTotalSize > maxPayloadSize) {
-    console.warn(`⚠️ WARNING: Final payload ${(finalTotalSize / 1024 / 1024).toFixed(2)}MB still exceeds ${(maxPayloadSize / 1024 / 1024).toFixed(1)}MB limit!`)
+    console.warn(`⚠️ WARNING: Final payload ${(finalTotalSize / 1024 / 1024).toFixed(2)}MB still exceeds ${(maxPayloadSize / 1024 / 1024).toFixed(1)}MB Railway target!`)
   }
 
   return { images, failed }
