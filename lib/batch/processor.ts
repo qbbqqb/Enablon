@@ -18,8 +18,8 @@ interface FileBatch {
 }
 
 export const BATCH_CONFIG: BatchConfig = {
-  maxFilesPerBatch: 6, // Safe for Vercel free plan
-  maxSizePerBatch: 20 * 1024 * 1024, // 20MB raw (compresses to ~3MB)
+  maxFilesPerBatch: 4, // Very conservative for reliable upload
+  maxSizePerBatch: 15 * 1024 * 1024, // 15MB raw (compresses to ~2MB)
 }
 
 export function createBatches(files: File[]): FileBatch[] {

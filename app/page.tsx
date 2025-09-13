@@ -6,6 +6,7 @@ import ProgressBar from '@/components/progress-bar'
 import ObservationReview from '@/components/observation-review'
 import { detectProjectFromNotes, detectAllProjectsFromNotes } from '@/lib/utils/projectDetection'
 import { createBatches, combineBatchResults, estimateBatchProcessingTime, getBatchProgressRange } from '@/lib/batch/processor'
+import { compressFileBatch } from '@/lib/client/compress'
 import type { Project } from '@/lib/constants/enums'
 import type { Observation } from '@/lib/types'
 
@@ -125,13 +126,34 @@ export default function Home() {
 
         console.log(`Processing batch ${i + 1}/${batches.length}: ${batch.files.length} files, ${(batch.estimatedSize / 1024 / 1024).toFixed(1)}MB`)
 
+        // Client-side compression before sending
+        setProgressLabel(`Compressing batch ${i + 1}/${batches.length}...`)
+        setProgress(progressRange.start)
+
+        let compressedFiles
+        try {
+          compressedFiles = await compressFileBatch(batch.files, 2.5) // Target 2.5MB per batch
+        } catch (error) {
+          console.error(`Failed to compress batch ${i + 1}:`, error)
+          throw new Error(`Batch ${i + 1} compression failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        }
+
+        const totalCompressedSize = compressedFiles.reduce((sum, cf) => sum + cf.compressedSize, 0)
+        console.log(`Batch ${i + 1} compressed: ${(totalCompressedSize / 1024 / 1024).toFixed(2)}MB`)
+
+        if (totalCompressedSize > 3.5 * 1024 * 1024) { // 3.5MB safety limit
+          throw new Error(`Batch ${i + 1} still too large after compression: ${(totalCompressedSize / 1024 / 1024).toFixed(1)}MB`)
+        }
+
         const formData = new FormData()
         formData.append('project', projectToUse)
         formData.append('notes', notes)
         formData.append('sessionId', sessionId)
         formData.append('batchIndex', i.toString())
         formData.append('totalBatches', batches.length.toString())
-        batch.files.forEach(file => formData.append('files', file))
+        compressedFiles.forEach(cf => formData.append('files', cf.file))
+
+        setProgressLabel(`Uploading batch ${i + 1}/${batches.length}...`)
 
         const response = await fetch('/api/analyze', {
           method: 'POST',
