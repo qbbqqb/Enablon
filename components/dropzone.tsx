@@ -73,6 +73,13 @@ export default function Dropzone({
     }
     
     const totalSize = imageFiles.reduce((sum, file) => sum + file.size, 0)
+    const vercelSafeLimit = 150 * 1024 * 1024 // 150MB raw limit (will be processed in batches)
+
+    if (totalSize > vercelSafeLimit) {
+      alert(`Total file size too large! Maximum ${vercelSafeLimit / 1024 / 1024}MB raw size allowed. Current: ${(totalSize / 1024 / 1024).toFixed(1)}MB. Large uploads will be processed in batches automatically.`)
+      return
+    }
+
     if (totalSize > CONSTANTS.MAX_UPLOAD_SIZE) {
       alert(`Total file size too large! Maximum ${CONSTANTS.MAX_UPLOAD_SIZE / 1024 / 1024}MB allowed.`)
       return
@@ -98,6 +105,13 @@ export default function Dropzone({
     }
     
     const totalSize = imageFiles.reduce((sum, file) => sum + file.size, 0)
+    const vercelSafeLimit = 150 * 1024 * 1024 // 150MB raw limit (will be processed in batches)
+
+    if (totalSize > vercelSafeLimit) {
+      alert(`Total file size too large! Maximum ${vercelSafeLimit / 1024 / 1024}MB raw size allowed. Current: ${(totalSize / 1024 / 1024).toFixed(1)}MB. Large uploads will be processed in batches automatically.`)
+      return
+    }
+
     if (totalSize > CONSTANTS.MAX_UPLOAD_SIZE) {
       alert(`Total file size too large! Maximum ${CONSTANTS.MAX_UPLOAD_SIZE / 1024 / 1024}MB allowed.`)
       return

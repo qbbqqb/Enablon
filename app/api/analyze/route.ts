@@ -13,7 +13,19 @@ export const maxDuration = 300 // 5 minutes
 export async function POST(request: NextRequest) {
   try {
     console.log('=== Analyze API Request Started ===')
-    
+
+    // Log request size information
+    const contentLength = request.headers.get('content-length')
+    if (contentLength) {
+      const sizeMB = parseInt(contentLength) / (1024 * 1024)
+      console.log(`Request Content-Length: ${sizeMB.toFixed(2)}MB`)
+
+      if (sizeMB > 4.5) {
+        console.error(`⚠️ Request size ${sizeMB.toFixed(2)}MB exceeds Vercel limit of 4.5MB`)
+        return new Response('Request too large', { status: 413 })
+      }
+    }
+
     // Parse multipart form data
     const formData = await request.formData()
     console.log('FormData parsed successfully')
@@ -23,18 +35,28 @@ export async function POST(request: NextRequest) {
     const project = (fdAny.get('project') as string) || ''
     const notes = (fdAny.get('notes') as string) || null
     const sessionId = (fdAny.get('sessionId') as string) || ''
+    const batchIndex = parseInt((fdAny.get('batchIndex') as string) || '0')
+    const totalBatches = parseInt((fdAny.get('totalBatches') as string) || '1')
     const fileEntries = Array.from(fdAny.getAll('files')).filter((file): file is File => file instanceof File)
-    
-    console.log(`Extracted: project=${project}, notes length=${notes?.length || 0}, files=${fileEntries.length}, sessionId=${sessionId}`)
+
+    console.log(`Extracted: project=${project}, notes length=${notes?.length || 0}, files=${fileEntries.length}, sessionId=${sessionId}, batch=${batchIndex + 1}/${totalBatches}`)
     
     // Send initial progress update
     if (sessionId) {
+      const batchLabel = totalBatches > 1
+        ? `Processing batch ${batchIndex + 1} of ${totalBatches}...`
+        : 'Starting analysis...'
+
       sendProgressUpdate(sessionId, {
         id: sessionId,
         progress: 5,
-        label: 'Starting analysis...',
+        label: batchLabel,
         step: 'starting',
-        details: { total: fileEntries.length }
+        details: {
+          total: fileEntries.length,
+          batchIndex: batchIndex + 1,
+          totalBatches: totalBatches
+        }
       })
     }
     
@@ -89,12 +111,20 @@ export async function POST(request: NextRequest) {
       console.log(`Detected ${allDetectedProjects.length} projects in notes:`, allDetectedProjects)
       
       if (sessionId) {
+        const batchPrefix = totalBatches > 1 ? `Batch ${batchIndex + 1}/${totalBatches}: ` : ''
+        const aiLabel = `${batchPrefix}Images processed. Starting ${allDetectedProjects.length > 1 ? 'multi-project ' : ''}analysis...`
+
         sendProgressUpdate(sessionId, {
           id: sessionId,
           progress: 35,
-          label: `Images processed. Starting ${allDetectedProjects.length > 1 ? 'multi-project ' : ''}analysis...`,
+          label: aiLabel,
           step: 'ai_starting',
-          details: { processed: images.length, total: fileEntries.length }
+          details: {
+            processed: images.length,
+            total: fileEntries.length,
+            batchIndex: batchIndex + 1,
+            totalBatches: totalBatches
+          }
         })
       }
       
@@ -116,12 +146,21 @@ export async function POST(request: NextRequest) {
       console.log(`Generated ${observations.length} observations, ${aiFailed.length} failed`)
       
       if (sessionId) {
+        const finalLabel = totalBatches > 1
+          ? `Batch ${batchIndex + 1}/${totalBatches} complete - ${observations.length} observations generated`
+          : 'Analysis complete - ready for review'
+
         sendProgressUpdate(sessionId, {
           id: sessionId,
           progress: 100,
-          label: 'Analysis complete - ready for review',
+          label: finalLabel,
           step: 'completed',
-          details: { processed: observations.length, total: images.length }
+          details: {
+            processed: observations.length,
+            total: images.length,
+            batchIndex: batchIndex + 1,
+            totalBatches: totalBatches
+          }
         })
       }
       

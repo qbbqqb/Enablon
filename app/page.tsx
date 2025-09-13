@@ -5,6 +5,7 @@ import Dropzone from '@/components/dropzone'
 import ProgressBar from '@/components/progress-bar'
 import ObservationReview from '@/components/observation-review'
 import { detectProjectFromNotes, detectAllProjectsFromNotes } from '@/lib/utils/projectDetection'
+import { createBatches, combineBatchResults, estimateBatchProcessingTime, getBatchProgressRange } from '@/lib/batch/processor'
 import type { Project } from '@/lib/constants/enums'
 import type { Observation } from '@/lib/types'
 
@@ -88,34 +89,89 @@ export default function Home() {
     }
     
     try {
-      const formData = new FormData()
-      
-      // Always use single analysis workflow but pass multiple projects
-      formData.append('project', projectToUse)
-      formData.append('notes', notes)
-      formData.append('sessionId', sessionId)
-      files.forEach(file => formData.append('files', file))
-      
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        body: formData
-      })
-      
-      if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`)
+      // Create batches for processing
+      const batches = createBatches(files)
+      const totalFiles = files.reduce((sum, file) => sum + file.size, 0)
+      const estimatedTime = estimateBatchProcessingTime(batches)
+
+      console.log(`Batch Processing: ${files.length} files → ${batches.length} batches (estimated ${Math.round(estimatedTime/60)}min)`)
+
+      if (batches.length > 1) {
+        const shouldContinue = confirm(
+          `Large upload detected!\n\n` +
+          `• ${files.length} photos will be processed in ${batches.length} batches\n` +
+          `• Estimated time: ${Math.round(estimatedTime/60)} minutes\n` +
+          `• Each batch processes 6 photos max\n\n` +
+          `Continue with batch processing?`
+        )
+
+        if (!shouldContinue) {
+          setIsProcessing(false)
+          return
+        }
       }
-      
-      // Parse analysis results
-      const result = await response.json()
-      setObservations(result.observations)
-      setProcessedImages(result.images || [])
-      
+
+      // Process all batches sequentially
+      const batchResults = []
+
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i]
+        const progressRange = getBatchProgressRange(i, batches.length)
+
+        // Update progress for batch start
+        if (eventSource) {
+          // SSE updates will be handled by the API
+        }
+
+        console.log(`Processing batch ${i + 1}/${batches.length}: ${batch.files.length} files, ${(batch.estimatedSize / 1024 / 1024).toFixed(1)}MB`)
+
+        const formData = new FormData()
+        formData.append('project', projectToUse)
+        formData.append('notes', notes)
+        formData.append('sessionId', sessionId)
+        formData.append('batchIndex', i.toString())
+        formData.append('totalBatches', batches.length.toString())
+        batch.files.forEach(file => formData.append('files', file))
+
+        const response = await fetch('/api/analyze', {
+          method: 'POST',
+          body: formData
+        })
+
+        if (!response.ok) {
+          throw new Error(`Batch ${i + 1} failed: Server error ${response.status}`)
+        }
+
+        const batchResult = await response.json()
+        batchResults.push(batchResult)
+
+        console.log(`Batch ${i + 1} completed: ${batchResult.observations?.length || 0} observations`)
+      }
+
+      // Combine all batch results
+      console.log('Combining batch results...')
+      if (sessionId) {
+        // Manual progress update for combining phase
+        const es = new EventSource(`/api/progress?sessionId=${sessionId}`)
+        es.addEventListener('message', () => {}) // Keep alive
+        setTimeout(() => {
+          es.close()
+        }, 2000)
+      }
+
+      const combinedResults = combineBatchResults(batchResults)
+
+      console.log(`Batch processing complete: ${combinedResults.observations.length} total observations, ${combinedResults.failed.length} failed`)
+
+      setObservations(combinedResults.observations)
+      setProcessedImages(combinedResults.images)
+
       // Close SSE connection
       if (eventSource) {
         eventSource.close()
         setEventSource(null)
       }
-      
+
       setIsProcessing(false)
       setShowReview(true)
       

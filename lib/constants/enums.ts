@@ -154,8 +154,8 @@ export const CONSTANTS = {
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB per file after compression
   AI_BATCH_SIZE: 8,
   AI_CONCURRENCY: 2,
-  IMAGE_MAX_DIMENSION: 1200,
-  IMAGE_QUALITY: 0.6,
+  IMAGE_MAX_DIMENSION: 800,
+  IMAGE_QUALITY: 0.4,
   TIMEZONE: 'Europe/Stockholm'
 } as const
 
