@@ -2,7 +2,7 @@ import sharp from 'sharp'
 import { CONSTANTS } from '../constants/enums'
 import type { ProcessedImage, FailedItem } from '../types'
 
-export async function normalizeImages(files: File[]): Promise<{
+export async function normalizeImages(files: any[]): Promise<{
   images: ProcessedImage[]
   failed: FailedItem[]
 }> {
@@ -11,11 +11,37 @@ export async function normalizeImages(files: File[]): Promise<{
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i]
-    
+
     try {
-      // Convert file to buffer
-      const arrayBuffer = await file.arrayBuffer()
-      const inputBuffer = Buffer.from(arrayBuffer)
+      // Convert file to buffer - handle both browser File objects and Node.js FormData entries
+      let inputBuffer: Buffer
+      if (file.arrayBuffer && typeof file.arrayBuffer === 'function') {
+        // Browser File object
+        const arrayBuffer = await file.arrayBuffer()
+        inputBuffer = Buffer.from(arrayBuffer)
+      } else if (file.stream && typeof file.stream === 'function') {
+        // Node.js FormData file entry
+        const chunks: Uint8Array[] = []
+        const reader = file.stream().getReader()
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          chunks.push(value)
+        }
+
+        // Combine all chunks into a single buffer
+        const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
+        const combined = new Uint8Array(totalLength)
+        let offset = 0
+        for (const chunk of chunks) {
+          combined.set(chunk, offset)
+          offset += chunk.length
+        }
+        inputBuffer = Buffer.from(combined)
+      } else {
+        throw new Error('Unsupported file format - no arrayBuffer or stream method available')
+      }
       
       // Process with sharp
       let processedBuffer = await sharp(inputBuffer)
@@ -31,23 +57,23 @@ export async function normalizeImages(files: File[]): Promise<{
       // Check if still too large after compression
       if (processedBuffer.length > CONSTANTS.MAX_FILE_SIZE) {
         failed.push({
-          originalFilename: file.name,
+          originalFilename: file.name || `file-${i}`,
           reason: `File still too large after compression: ${(processedBuffer.length / 1024 / 1024).toFixed(1)}MB > 10MB`,
           step: 'processing'
         })
         continue
       }
-      
+
       images.push({
         originalIndex: i,
-        originalName: file.name,
+        originalName: file.name || `image-${i}.jpg`,
         buffer: processedBuffer,
         mimeType: 'image/jpeg'
       })
       
     } catch (error) {
       failed.push({
-        originalFilename: file.name,
+        originalFilename: file.name || `file-${i}`,
         reason: `Failed to process image: ${error instanceof Error ? error.message : 'Unknown error'}`,
         step: 'processing'
       })
@@ -111,12 +137,12 @@ export async function normalizeImages(files: File[]): Promise<{
         attempts++
 
       } catch (error) {
-        console.error(`Failed to compress image ${image.originalName}:`, error)
+        console.error(`Failed to compress image ${image.originalName || 'unknown'}:`, error)
         break
       }
     }
 
-    console.log(`  Final: ${image.originalName} compressed from ${(originalSize / 1024).toFixed(0)}KB to ${(image.buffer.length / 1024).toFixed(0)}KB`)
+    console.log(`  Final: ${image.originalName || 'unknown'} compressed from ${(originalSize / 1024).toFixed(0)}KB to ${(image.buffer.length / 1024).toFixed(0)}KB`)
   }
 
   const finalTotalSize = images.reduce((sum, img) => sum + img.buffer.length, 0)

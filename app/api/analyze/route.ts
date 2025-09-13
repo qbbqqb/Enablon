@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Validate total size
-    const totalSize = fileEntries.reduce((sum, file) => sum + file.size, 0)
+    const totalSize: number = fileEntries.reduce((sum: number, file: any) => sum + (file.size || 0), 0)
     if (totalSize > CONSTANTS.MAX_UPLOAD_SIZE) {
       return new Response(`Total upload too large. Maximum ${CONSTANTS.MAX_UPLOAD_SIZE / 1024 / 1024}MB allowed.`, { status: 400 })
     }
