@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
       console.log(`Request Content-Length: ${sizeMB.toFixed(2)}MB`)
 
       if (sizeMB > 4.5) {
-        console.error(`⚠️ Request size ${sizeMB.toFixed(2)}MB exceeds Vercel limit of 4.5MB`)
+        console.error(`⚠️ Request size ${sizeMB.toFixed(2)}MB exceeds platform limit of 4.5MB`)
         return new Response('Request too large', { status: 413 })
       }
     }
@@ -37,7 +37,10 @@ export async function POST(request: NextRequest) {
     const sessionId = (fdAny.get('sessionId') as string) || ''
     const batchIndex = parseInt((fdAny.get('batchIndex') as string) || '0')
     const totalBatches = parseInt((fdAny.get('totalBatches') as string) || '1')
-    const fileEntries = Array.from(fdAny.getAll('files')).filter((file): file is File => file instanceof File)
+    const fileEntries = Array.from(fdAny.getAll('files')).filter((file: any) => {
+      // In Node.js, FormData files are different from browser File objects
+      return file && file.name && file.size !== undefined && file.stream
+    })
 
     console.log(`Extracted: project=${project}, notes length=${notes?.length || 0}, files=${fileEntries.length}, sessionId=${sessionId}, batch=${batchIndex + 1}/${totalBatches}`)
     

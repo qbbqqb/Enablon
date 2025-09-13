@@ -90,6 +90,14 @@ export default function Home() {
     }
     
     try {
+      // Check for overly large individual files first
+      const oversizedFiles = files.filter(f => f.size > 10 * 1024 * 1024) // 10MB per file
+      if (oversizedFiles.length > 0) {
+        alert(`Some files are too large:\n${oversizedFiles.map(f => `${f.name}: ${(f.size/1024/1024).toFixed(1)}MB`).join('\n')}\n\nPlease use images smaller than 10MB each.`)
+        setIsProcessing(false)
+        return
+      }
+
       // Create batches for processing
       const batches = createBatches(files)
       const totalFiles = files.reduce((sum, file) => sum + file.size, 0)
@@ -141,8 +149,9 @@ export default function Home() {
         const totalCompressedSize = compressedFiles.reduce((sum, cf) => sum + cf.compressedSize, 0)
         console.log(`Batch ${i + 1} compressed: ${(totalCompressedSize / 1024 / 1024).toFixed(2)}MB`)
 
-        if (totalCompressedSize > 3.5 * 1024 * 1024) { // 3.5MB safety limit
-          throw new Error(`Batch ${i + 1} still too large after compression: ${(totalCompressedSize / 1024 / 1024).toFixed(1)}MB`)
+        if (totalCompressedSize > 2.5 * 1024 * 1024) { // 2.5MB safety limit
+          console.error(`Batch ${i + 1} too large:`, compressedFiles.map(cf => `${cf.file.name}: ${(cf.compressedSize/1024).toFixed(0)}KB`))
+          throw new Error(`Batch ${i + 1} still too large after compression: ${(totalCompressedSize / 1024 / 1024).toFixed(1)}MB. Try fewer photos or smaller images.`)
         }
 
         const formData = new FormData()

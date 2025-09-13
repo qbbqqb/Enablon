@@ -7,7 +7,7 @@ export interface CompressedFile {
   compressionRatio: number
 }
 
-export async function compressImageFile(file: File, targetSizeKB: number = 500): Promise<CompressedFile> {
+export async function compressImageFile(file: File, targetSizeKB: number = 300): Promise<CompressedFile> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     const canvas = document.createElement('canvas')
@@ -20,7 +20,7 @@ export async function compressImageFile(file: File, targetSizeKB: number = 500):
 
     img.onload = () => {
       // Calculate dimensions to fit within limits while maintaining aspect ratio
-      const maxDimension = 800 // Conservative for client-side
+      const maxDimension = 600 // Very conservative for client-side
       const scale = Math.min(maxDimension / img.width, maxDimension / img.height, 1)
 
       canvas.width = Math.round(img.width * scale)
@@ -29,8 +29,8 @@ export async function compressImageFile(file: File, targetSizeKB: number = 500):
       // Draw and compress
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
-      // Start with aggressive compression
-      let quality = 0.3
+      // Start with very aggressive compression
+      let quality = 0.2
       const tryCompress = () => {
         canvas.toBlob((blob) => {
           if (!blob) {
