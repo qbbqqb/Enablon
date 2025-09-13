@@ -5,7 +5,7 @@ import { normalizeImages } from '@/lib/files/normalize'
 import { analyzeImages } from '@/lib/ai/analyze'
 import { createZipStream, streamZipToBuffer } from '@/lib/zip/buildZip'
 import type { FailedItem } from '@/lib/types'
-import { sendProgressUpdate } from '@/app/api/progress/route'
+import { sendProgressUpdate } from '@/lib/progress/manager'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // 5 minutes

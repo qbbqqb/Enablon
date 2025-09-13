@@ -5,7 +5,8 @@ import Dropzone from '@/components/dropzone'
 import ProgressBar from '@/components/progress-bar'
 import ObservationReview from '@/components/observation-review'
 import { detectProjectFromNotes, detectAllProjectsFromNotes } from '@/lib/utils/projectDetection'
-import type { Project, Observation } from '@/lib/constants/enums'
+import type { Project } from '@/lib/constants/enums'
+import type { Observation } from '@/lib/types'
 
 export default function Home() {
   const [files, setFiles] = useState<File[]>([])

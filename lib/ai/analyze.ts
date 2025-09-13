@@ -13,15 +13,8 @@ import {
 } from '../constants/enums'
 import { getStockholmDate } from '../date/stockholm'
 
-// Import sendProgressUpdate - handle the case where it might not be available in build env
-let sendProgressUpdate: ((sessionId: string, progress: any) => void) | undefined
-try {
-  const progressModule = require('../../app/api/progress/route')
-  sendProgressUpdate = progressModule.sendProgressUpdate
-} catch {
-  // Progress updates not available
-  sendProgressUpdate = undefined
-}
+// Import sendProgressUpdate from progress manager
+import { sendProgressUpdate } from '../progress/manager'
 
 interface AnalyzeImagesInput {
   images: ProcessedImage[]
@@ -80,7 +73,7 @@ async function processBatch(
 ): Promise<{ observations: Observation[], failed: FailedItem[] }> {
   try {
     // Send progress update for batch processing
-    if (sessionId && sendProgressUpdate && totalBatches) {
+    if (sessionId && totalBatches) {
       const progressPercent = 40 + (batchIndex / totalBatches) * 40 // 40-80% range for AI processing
       sendProgressUpdate(sessionId, {
         id: sessionId,

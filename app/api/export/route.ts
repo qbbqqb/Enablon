@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { PROJECTS } from '@/lib/constants/enums'
-import type { Project, Observation } from '@/lib/constants/enums'
+import type { Project } from '@/lib/constants/enums'
+import type { Observation } from '@/lib/types'
 import { createZipStream, streamZipToBuffer } from '@/lib/zip/buildZip'
 import type { FailedItem } from '@/lib/types'
 

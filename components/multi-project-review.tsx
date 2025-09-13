@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import type { Observation } from '@/lib/constants/enums'
+import type { Observation } from '@/lib/types'
 
 interface ProjectResult {
   project: string
