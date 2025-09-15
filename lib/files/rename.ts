@@ -4,30 +4,26 @@ import type { Project } from '../constants/enums'
 export function generatePhotoFilename(
   project: Project,
   obsNo: number,
-  observation: Observation
+  observation: Observation,
+  photoIndex: number = 1
 ): string {
   // Zero-padded observation number
   const obsNoStr = obsNo.toString().padStart(3, '0')
-  
-  // Area (sanitized)
-  const area = sanitizeForFilename(observation['Room/Area'])
-  
-  // Category or HRA
-  const categoryOrHRA = observation['Category Type'] === 'HRA + Significant Exposure' 
-    ? sanitizeForFilename(observation['High Risk + Significant Exposure'])
-    : sanitizeForFilename(observation['General Category'])
-  
-  // Severity (sanitized)
-  const severity = sanitizeForFilename(observation['Worst Potential Severity'])
-  
+
+  // Short area code (max 8 chars)
+  const area = sanitizeForFilename(observation['Room/Area']).substring(0, 8)
+
+  // Simplified category
+  const category = observation['Category Type'] === 'HRA + Significant Exposure' ? 'HRA' : 'GEN'
+
   // Date (YYYYMMDD)
   const dateParts = observation['Notification Date'].split('/')
   const dateStr = `${dateParts[2]}${dateParts[1]}${dateParts[0]}` // DD/MM/YYYY -> YYYYMMDD
-  
-  // Short slug from description (3-4 keywords)
-  const shortSlug = generateShortSlug(observation['Observation Description'])
-  
-  return `${project}-${obsNoStr}-${area}-${categoryOrHRA}-${severity}-${dateStr}-${shortSlug}.jpg`
+
+  // Photo number for multiple photos per observation
+  const photoNum = photoIndex > 1 ? `-${photoIndex}` : ''
+
+  return `${project}-${obsNoStr}-${area}-${category}-${dateStr}${photoNum}.jpg`
 }
 
 function sanitizeForFilename(str: string): string {

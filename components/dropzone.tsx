@@ -62,17 +62,28 @@ export default function Dropzone({
     if (disabled) return
 
     const droppedFiles = Array.from(e.dataTransfer.files)
-    const imageFiles = droppedFiles.filter(file => 
-      file.type.startsWith('image/') || 
+    const imageFiles = droppedFiles.filter(file =>
+      file.type.startsWith('image/') ||
       file.name.toLowerCase().endsWith('.heic')
     )
-    
-    if (imageFiles.length > maxFiles) {
-      alert(`Too many files! Maximum ${maxFiles} files allowed.`)
+
+    // Filter out duplicates based on name and size
+    const existingFileKeys = new Set(files.map(f => `${f.name}-${f.size}`))
+    const newImageFiles = imageFiles.filter(file =>
+      !existingFileKeys.has(`${file.name}-${file.size}`)
+    )
+
+    if (newImageFiles.length === 0) {
+      alert('All files are already added!')
+      return
+    }
+
+    if (files.length + newImageFiles.length > maxFiles) {
+      alert(`Too many files! Maximum ${maxFiles} files allowed. You have ${files.length} and trying to add ${newImageFiles.length}.`)
       return
     }
     
-    const totalSize = imageFiles.reduce((sum, file) => sum + file.size, 0)
+    const totalSize = newImageFiles.reduce((sum, file) => sum + file.size, 0) + files.reduce((sum, file) => sum + file.size, 0)
     const vercelSafeLimit = 150 * 1024 * 1024 // 150MB raw limit (will be processed in batches)
 
     if (totalSize > vercelSafeLimit) {
@@ -85,26 +96,38 @@ export default function Dropzone({
       return
     }
 
-    const filesWithPreviews = generatePreviews(imageFiles)
-    setFiles(filesWithPreviews)
-    onFilesSelected(imageFiles)
+    const filesWithPreviews = generatePreviews(newImageFiles)
+    const newFiles = [...files, ...filesWithPreviews]
+    setFiles(newFiles)
+    onFilesSelected(newFiles)
   }, [disabled, maxFiles, onFilesSelected, generatePreviews])
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (disabled) return
     
     const selectedFiles = Array.from(e.target.files || [])
-    const imageFiles = selectedFiles.filter(file => 
-      file.type.startsWith('image/') || 
+    const imageFiles = selectedFiles.filter(file =>
+      file.type.startsWith('image/') ||
       file.name.toLowerCase().endsWith('.heic')
     )
-    
-    if (imageFiles.length > maxFiles) {
-      alert(`Too many files! Maximum ${maxFiles} files allowed.`)
+
+    // Filter out duplicates based on name and size
+    const existingFileKeys = new Set(files.map(f => `${f.name}-${f.size}`))
+    const newImageFiles = imageFiles.filter(file =>
+      !existingFileKeys.has(`${file.name}-${file.size}`)
+    )
+
+    if (newImageFiles.length === 0) {
+      alert('All files are already added!')
+      return
+    }
+
+    if (files.length + newImageFiles.length > maxFiles) {
+      alert(`Too many files! Maximum ${maxFiles} files allowed. You have ${files.length} and trying to add ${newImageFiles.length}.`)
       return
     }
     
-    const totalSize = imageFiles.reduce((sum, file) => sum + file.size, 0)
+    const totalSize = newImageFiles.reduce((sum, file) => sum + file.size, 0) + files.reduce((sum, file) => sum + file.size, 0)
     const vercelSafeLimit = 150 * 1024 * 1024 // 150MB raw limit (will be processed in batches)
 
     if (totalSize > vercelSafeLimit) {
@@ -117,9 +140,10 @@ export default function Dropzone({
       return
     }
 
-    const filesWithPreviews = generatePreviews(imageFiles)
-    setFiles(filesWithPreviews)
-    onFilesSelected(imageFiles)
+    const filesWithPreviews = generatePreviews(newImageFiles)
+    const newFiles = [...files, ...filesWithPreviews]
+    setFiles(newFiles)
+    onFilesSelected(newFiles)
   }, [disabled, maxFiles, onFilesSelected, generatePreviews])
 
   const clearFiles = () => {

@@ -161,7 +161,11 @@ function buildAIPrompt(project: Project, notes?: string, allProjects?: Project[]
   
   return `Role: construction safety inspector producing Compass/Enablon rows
 
-Output: STRICT JSON array; one object per image in input order; no extra fields; British English
+CRITICAL GROUPING INSTRUCTIONS:
+- If multiple photos show the SAME safety issue/observation, create ONE observation and note this in the description
+- Only create separate observations for genuinely DIFFERENT safety issues
+- If photos show different angles/views of the same problem, combine into ONE observation
+- Output: STRICT JSON array; one object per UNIQUE observation (may be fewer than input images); no extra fields; British English
 
 Timezone: Europe/Stockholm; Notification Date = ${notificationDate}
 
@@ -170,7 +174,15 @@ MULTI-PROJECT ANALYSIS:
 Available Projects: ${allProjects.join(', ')}
 Primary Project: ${project}
 
-CRITICAL: For each observation, determine the appropriate project code based on the context from the notes and image content. Use the specific project code (${allProjects.join(', ')}) that matches the location/issue shown in each photo.` : `Project: ${project}`}
+CRITICAL: For each observation, determine the appropriate project code based on the context from the notes and image content. Use ONLY the specific project codes (${allProjects.join(', ')}) that matches the location/issue shown in each photo.
+
+IMPORTANT: Do NOT confuse building areas with project names:
+- COLO1, COLO2, CELL1, CELL2 etc. are building areas/rooms (use "COLO or AZ" for Room/Area field)
+- Only valid project codes are: ${allProjects.join(', ')}` : `Project: ${project}
+
+IMPORTANT: Do NOT confuse building areas with project names:
+- COLO1, COLO2, CELL1, CELL2 etc. are building areas/rooms (use "COLO or AZ" for Room/Area field)
+- Only valid project code is: ${project}`}
 ${notes ? `
 CONTEXT NOTES FROM SAFETY INSPECTOR:
 ${notes}
@@ -196,6 +208,7 @@ Worst Potential Severity: ${SEVERITY_LEVELS.join(', ')}
 CRITICAL RULES:
 - If Category Type = "HRA + Significant Exposure" → populate High Risk field, leave General Category empty
 - If Category Type = "General Category" → populate General Category, leave High Risk field empty
+- Project field must ONLY contain valid project codes (${allProjects ? allProjects.join(', ') : project}) - NOT building areas like COLO1, CELL1, etc.
 
 FINAL CORRECTIVE ACTIONS FORMAT:
 - Start with status: "OPEN - GC to action" (if further action needed) or "CLOSED" (if resolved on spot)

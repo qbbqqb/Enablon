@@ -154,9 +154,9 @@ export const CONSTANTS = {
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB per file after compression
   AI_BATCH_SIZE: 8,
   AI_CONCURRENCY: 2,
-  // Railway-optimized settings - higher quality for better observation photos
-  IMAGE_MAX_DIMENSION: 1200, // Increased from 800
-  IMAGE_QUALITY: 0.7, // Increased from 0.4
+  // Maximum quality for GC safety documentation
+  IMAGE_MAX_DIMENSION: 1600, // Full detail for safety inspections
+  IMAGE_QUALITY: 0.85, // High quality for professional documentation
   TIMEZONE: 'Europe/Stockholm'
 } as const
 
