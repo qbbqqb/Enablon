@@ -82,7 +82,7 @@ export async function normalizeImages(files: any[]): Promise<{
 
   // Apply moderate compression for Railway deployment
   const totalSize = images.reduce((sum, img) => sum + img.buffer.length, 0)
-  const maxPayloadSize = 8 * 1024 * 1024 // 8MB target for Railway (more generous than Vercel)
+  const maxPayloadSize = 12 * 1024 * 1024 // 12MB target for Railway (premium quality)
 
   console.log(`Initial payload: ${(totalSize / 1024 / 1024).toFixed(2)}MB with ${images.length} images`)
 
@@ -94,14 +94,14 @@ export async function normalizeImages(files: any[]): Promise<{
 
     console.log(`Compressing image ${i + 1}/${images.length}: ${image.originalName} (${(originalSize / 1024).toFixed(0)}KB → target: ${(targetSize / 1024).toFixed(0)}KB)`)
 
-    // Start with moderate settings for Railway
-    let quality = 0.5
-    let dimension = 900
+    // Start with high quality settings for Railway
+    let quality = 0.7
+    let dimension = 1200
 
-    // If image is already small enough, use higher quality
+    // If image is already small enough, use premium quality
     if (originalSize <= targetSize) {
-      quality = 0.7
-      dimension = 1000
+      quality = 0.85
+      dimension = 1400
     }
 
     let attempts = 0
@@ -132,8 +132,8 @@ export async function normalizeImages(files: any[]): Promise<{
         }
 
         // More gentle reduction for better quality
-        quality = Math.max(0.25, quality - 0.08)
-        dimension = Math.max(600, dimension - 80)
+        quality = Math.max(0.4, quality - 0.1)
+        dimension = Math.max(800, dimension - 100)
         attempts++
 
       } catch (error) {
@@ -149,7 +149,7 @@ export async function normalizeImages(files: any[]): Promise<{
   console.log(`Final payload: ${(finalTotalSize / 1024 / 1024).toFixed(2)}MB (reduction: ${(((totalSize - finalTotalSize) / totalSize) * 100).toFixed(1)}%)`)
 
   if (finalTotalSize > maxPayloadSize) {
-    console.warn(`⚠️ WARNING: Final payload ${(finalTotalSize / 1024 / 1024).toFixed(2)}MB still exceeds ${(maxPayloadSize / 1024 / 1024).toFixed(1)}MB Railway target!`)
+    console.warn(`⚠️ WARNING: Final payload ${(finalTotalSize / 1024 / 1024).toFixed(2)}MB still exceeds ${(maxPayloadSize / 1024 / 1024).toFixed(1)}MB Railway premium target!`)
   }
 
   return { images, failed }

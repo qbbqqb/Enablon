@@ -10,11 +10,23 @@ export function generatePhotoFilename(
   // Zero-padded observation number
   const obsNoStr = obsNo.toString().padStart(3, '0')
 
-  // Short area code (max 8 chars)
-  const area = sanitizeForFilename(observation['Room/Area']).substring(0, 8)
+  // Area code (max 10 chars for readability)
+  const area = sanitizeForFilename(observation['Room/Area']).substring(0, 10)
 
-  // Simplified category
-  const category = observation['Category Type'] === 'HRA + Significant Exposure' ? 'HRA' : 'GEN'
+  // More descriptive category with severity
+  const categoryType = observation['Category Type'] === 'HRA + Significant Exposure' ? 'HRA' : 'GEN'
+  const specificCategory = observation['Category Type'] === 'HRA + Significant Exposure'
+    ? sanitizeForFilename(observation['High Risk + Significant Exposure']).substring(0, 12)
+    : sanitizeForFilename(observation['General Category']).substring(0, 12)
+
+  // Severity level (abbreviated)
+  const severity = getSeverityCode(observation['Worst Potential Severity'])
+
+  // Observation category (New/Near Miss/Positive)
+  const obsCategory = getObsCategoryCode(observation['Observation Category'])
+
+  // Short description from the observation
+  const description = generateShortSlug(observation['Observation Description'], 30)
 
   // Date (YYYYMMDD)
   const dateParts = observation['Notification Date'].split('/')
@@ -23,7 +35,26 @@ export function generatePhotoFilename(
   // Photo number for multiple photos per observation
   const photoNum = photoIndex > 1 ? `-${photoIndex}` : ''
 
-  return `${project}-${obsNoStr}-${area}-${category}-${dateStr}${photoNum}.jpg`
+  return `${project}-${obsNoStr}-${area}-${categoryType}-${specificCategory}-${severity}-${obsCategory}-${description}-${dateStr}${photoNum}.jpg`
+}
+
+function getSeverityCode(severity: string): string {
+  switch (severity) {
+    case 'Major (1 Day)': return 'MAJOR'
+    case 'Potentially Serious/Serious (Immediate)': return 'SERIOUS'
+    case 'Positive Observation': return 'POSITIVE'
+    case 'Minor (7 Days)': return 'MINOR'
+    default: return 'UNK'
+  }
+}
+
+function getObsCategoryCode(category: string): string {
+  switch (category) {
+    case 'New At Risk Observation': return 'ATRISK'
+    case 'New Near Miss': return 'NEARMISS'
+    case 'New Positive Observation': return 'POSITIVE'
+    default: return 'UNK'
+  }
 }
 
 function sanitizeForFilename(str: string): string {
