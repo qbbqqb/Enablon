@@ -100,7 +100,7 @@ export default function Dropzone({
     const newFiles = [...files, ...filesWithPreviews]
     setFiles(newFiles)
     onFilesSelected(newFiles)
-  }, [disabled, maxFiles, onFilesSelected, generatePreviews])
+  }, [disabled, maxFiles, onFilesSelected, generatePreviews, files])
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (disabled) return
@@ -144,7 +144,7 @@ export default function Dropzone({
     const newFiles = [...files, ...filesWithPreviews]
     setFiles(newFiles)
     onFilesSelected(newFiles)
-  }, [disabled, maxFiles, onFilesSelected, generatePreviews])
+  }, [disabled, maxFiles, onFilesSelected, generatePreviews, files])
 
   const clearFiles = () => {
     setFiles([])
