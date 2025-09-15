@@ -58,7 +58,7 @@ export default function Home() {
 
     const projectToUse = detectedProject
     if (!projectToUse) {
-      alert('Please include a project code (GVX04, GVX03, or COLO1) in your notes')
+      alert('Please include a project code (GVX04, GVX03, or GVX05) in your notes')
       return
     }
     
@@ -353,7 +353,7 @@ export default function Home() {
               {!detectedProject && notes.length > 10 && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                   <p className="text-yellow-800 text-sm">
-                    <strong>Missing project code:</strong> Please include GVX04, GVX03, or COLO1 in your notes to auto-detect the project.
+                    <strong>Missing project code:</strong> Please include GVX04, GVX03, or GVX05 in your notes to auto-detect the project.
                   </p>
                 </div>
               )}
@@ -424,7 +424,7 @@ export default function Home() {
                   {files.length === 0 
                     ? "Please upload photos and include project code in notes" 
                     : allDetectedProjects.length === 0
-                    ? "Please include project code (GVX04, GVX03, or COLO1) in your notes"
+                    ? "Please include project code (GVX04, GVX03, or GVX05) in your notes"
                     : ""
                   }
                 </p>
