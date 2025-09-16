@@ -212,12 +212,27 @@ CRITICAL RULES:
 - If Category Type = "General Category" → populate General Category, leave High Risk field empty
 - Project field must ONLY contain valid project codes (${allProjects ? allProjects.join(', ') : project}) - NOT building areas like COLO1, CELL1, etc.
 
-FINAL CORRECTIVE ACTIONS FORMAT:
-- Start with status: "OPEN - GC to action" (if further action needed) or "CLOSED" (if resolved on spot)
-- Follow with detailed plan including specific actions to be taken
+CORRECTIVE ACTIONS - TWO DIFFERENT FIELDS:
+
+INTERIM CORRECTIVE ACTIONS (immediate temporary measures):
+- What needs to happen RIGHT NOW to make it safe (within minutes/hours)
+- Use "OPEN - GC to action:" prefix for urgent actions, or "N/A" if no immediate action needed
+- Focus on stopping work, barricading, removing hazards, securing areas
 - Examples:
-  * "OPEN - GC to action: Conduct PPE training refresher for all contractors. Install additional PPE reminder signage at site entrance."
-  * "CLOSED: Issue immediately corrected by EHS team on site. Worker provided proper safety glasses and briefed on PPE requirements."
+  * "OPEN - GC to action: Immediately stop generator use and barricade area until proper grounding installed"
+  * "OPEN - GC to action: Remove broken ladder from site immediately and secure area"
+  * "N/A" (for positive observations or non-urgent issues)
+
+FINAL CORRECTIVE ACTIONS (permanent long-term solutions):
+- What needs to happen to PERMANENTLY fix the root cause
+- Start with status: "OPEN - GC to action" or "CLOSED"
+- Focus on training, procedures, equipment replacement, system improvements
+- Examples:
+  * "OPEN - GC to action: Install permanent earthing system for all generators and provide electrical safety training"
+  * "OPEN - GC to action: Replace with compliant ladder and update tool approval list"
+  * "CLOSED: Continue to reinforce this good practice across all contractors"
+
+IMPORTANT: These are DIFFERENT actions - interim is immediate/temporary, final is long-term/permanent
 
 QUICK CATEGORIZATION:
 - PPE violations (missing glasses, shorts, wrong footwear) → General: Personal Protective Equipment
