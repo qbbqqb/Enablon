@@ -7,26 +7,11 @@ export function generatePhotoFilename(
   observation: Observation,
   photoIndex: number = 1
 ): string {
-  // Zero-padded observation number
+  // Zero-padded observation number for CSV cross-reference
   const obsNoStr = obsNo.toString().padStart(3, '0')
 
-  // Area code (max 10 chars for readability)
-  const area = sanitizeForFilename(observation['Room/Area']).substring(0, 10)
-
-  // More descriptive category with severity
-  const categoryType = observation['Category Type'] === 'HRA + Significant Exposure' ? 'HRA' : 'GEN'
-  const specificCategory = observation['Category Type'] === 'HRA + Significant Exposure'
-    ? sanitizeForFilename(observation['High Risk + Significant Exposure']).substring(0, 12)
-    : sanitizeForFilename(observation['General Category']).substring(0, 12)
-
-  // Severity level (abbreviated)
-  const severity = getSeverityCode(observation['Worst Potential Severity'])
-
-  // Observation category (New/Near Miss/Positive)
-  const obsCategory = getObsCategoryCode(observation['Observation Category'])
-
-  // Short description from the observation
-  const description = generateShortSlug(observation['Observation Description'], 30)
+  // Short description from the observation (key safety issue)
+  const description = generateShortSlug(observation['Observation Description'], 25)
 
   // Date (YYYYMMDD)
   const dateParts = observation['Notification Date'].split('/')
@@ -35,7 +20,8 @@ export function generatePhotoFilename(
   // Photo number for multiple photos per observation
   const photoNum = photoIndex > 1 ? `-${photoIndex}` : ''
 
-  return `${project}-${obsNoStr}-${area}-${categoryType}-${specificCategory}-${severity}-${obsCategory}-${description}-${dateStr}${photoNum}.jpg`
+  // Format: PROJECT-OBSNO-DESCRIPTION-DATE
+  return `${project}-${obsNoStr}-${description}-${dateStr}${photoNum}.jpg`
 }
 
 function getSeverityCode(severity: string): string {

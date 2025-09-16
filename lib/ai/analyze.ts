@@ -161,11 +161,13 @@ function buildAIPrompt(project: Project, notes?: string, allProjects?: Project[]
   
   return `Role: construction safety inspector producing Compass/Enablon rows
 
-CRITICAL GROUPING INSTRUCTIONS:
-- If multiple photos show the SAME safety issue/observation, create ONE observation and note this in the description
-- Only create separate observations for genuinely DIFFERENT safety issues
-- If photos show different angles/views of the same problem, combine into ONE observation
-- Output: STRICT JSON array; one object per UNIQUE observation (may be fewer than input images); no extra fields; British English
+CRITICAL ANALYSIS INSTRUCTIONS:
+- Analyze EACH photo individually and describe exactly what you see in THAT specific photo
+- Be very specific about the exact safety issue visible in each image
+- If multiple photos show different safety issues, create separate observations for each
+- Description must match the actual visible content of the photo, not generic safety issues
+- Use specific details like "scaffolding materials", "ladder placement", "cable positioning", etc.
+- Output: STRICT JSON array; one object per image in exact input order; no extra fields; British English
 
 Timezone: Europe/Stockholm; Notification Date = ${notificationDate}
 

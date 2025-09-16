@@ -30,22 +30,14 @@ export function createZipStream(input: ZipContentInput): {
   const csvContent = buildCSV(observations)
   archive.append(Buffer.from(csvContent, 'utf8'), { name: 'observations.csv' })
   
-  // Add renamed photos - handle case where observations may be grouped
-  images.forEach((image, imageIndex) => {
-    // Find the corresponding observation (may be fewer observations than images)
-    const obsIndex = Math.min(imageIndex, observations.length - 1)
-    const obs = observations[obsIndex]
-
-    if (!obs) return
+  // Add renamed photos - one observation per image
+  observations.forEach((obs, index) => {
+    const image = images[index]
+    if (!image) return
 
     // Use the project code from the observation itself for multi-project scenarios
     const obsProject = (obs.Project as Project) || project
-
-    // Count how many photos we've already assigned to this observation
-    const existingPhotosForObs = manifest.filter(m => m.rowNumber === obsIndex + 1).length
-    const photoIndex = existingPhotosForObs + 1
-
-    const baseFilename = generatePhotoFilename(obsProject, obsIndex + 1, obs, photoIndex)
+    const baseFilename = generatePhotoFilename(obsProject, index + 1, obs)
     const finalFilename = deduplicateFilename(baseFilename, usedFilenames)
     usedFilenames.add(finalFilename)
 
@@ -54,7 +46,7 @@ export function createZipStream(input: ZipContentInput): {
 
     // Track in manifest
     manifest.push({
-      rowNumber: obsIndex + 1,
+      rowNumber: index + 1,
       originalFilename: image.originalName,
       renamedFilename: finalFilename,
       observationDescription: obs['Observation Description']

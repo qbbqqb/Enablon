@@ -103,20 +103,7 @@ export default function Home() {
 
       console.log(`Batch Processing: ${files.length} files → ${batches.length} batches (estimated ${Math.round(estimatedTime/60)}min)`)
 
-      if (batches.length > 1) {
-        const shouldContinue = confirm(
-          `Large upload detected!\n\n` +
-          `• ${files.length} photos will be processed in ${batches.length} batches\n` +
-          `• Estimated time: ${Math.round(estimatedTime/60)} minutes\n` +
-          `• Each batch processes 6 photos max\n\n` +
-          `Continue with batch processing?`
-        )
-
-        if (!shouldContinue) {
-          setIsProcessing(false)
-          return
-        }
-      }
+      // Auto-process batches without confirmation dialog
 
       // Process all batches sequentially
       const batchResults = []
