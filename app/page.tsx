@@ -8,6 +8,7 @@ import { detectProjectFromNotes, detectAllProjectsFromNotes } from '@/lib/utils/
 import { createBatches, combineBatchResults, estimateBatchProcessingTime, getBatchProgressRange } from '@/lib/batch/processor'
 import { compressFileBatch } from '@/lib/client/compress'
 import type { Project } from '@/lib/constants/enums'
+import { PROJECTS } from '@/lib/constants/enums'
 import type { Observation } from '@/lib/types'
 
 export default function Home() {
@@ -56,11 +57,8 @@ export default function Home() {
       return
     }
 
-    const projectToUse = detectedProject
-    if (!projectToUse) {
-      alert('Please include a project code (GVX04, GVX03, or GVX05) in your notes')
-      return
-    }
+    // Use detected project or default to first available project for processing
+    const projectToUse = detectedProject || PROJECTS[0]
     
     // Generate unique session ID
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -224,11 +222,19 @@ export default function Home() {
 
   const handleExportObservations = async (reviewedObservations: Observation[]) => {
     setIsExporting(true)
-    
+
     try {
       // Use "mixed" as project name when multiple projects are detected
       const projectForFilename = allDetectedProjects.length > 1 ? 'mixed' : (detectedProject || 'unknown')
-      
+
+      console.log('Export request:', {
+        observations: reviewedObservations.length,
+        project: projectForFilename,
+        images: processedImages.length,
+        detectedProject,
+        allDetectedProjects
+      })
+
       const response = await fetch('/api/export', {
         method: 'POST',
         headers: {
@@ -243,7 +249,9 @@ export default function Home() {
       })
       
       if (!response.ok) {
-        throw new Error(`Export failed: ${response.status}`)
+        const errorText = await response.text()
+        console.error('Export API error:', response.status, errorText)
+        throw new Error(`Export failed: ${response.status} - ${errorText}`)
       }
       
       // Handle ZIP download

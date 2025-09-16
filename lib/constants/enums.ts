@@ -152,8 +152,8 @@ export const CONSTANTS = {
   MAX_FILES: 60,
   MAX_UPLOAD_SIZE: 200 * 1024 * 1024, // 200MB
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB per file after compression
-  AI_BATCH_SIZE: 8,
-  AI_CONCURRENCY: 2,
+  AI_BATCH_SIZE: 10, // Process more images per AI call
+  AI_CONCURRENCY: 3, // Faster concurrent processing
   // Maximum quality for GC safety documentation (Railway optimized)
   IMAGE_MAX_DIMENSION: 2048, // Ultra-high detail for safety inspections
   IMAGE_QUALITY: 0.92, // Premium quality for professional documentation
