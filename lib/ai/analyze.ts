@@ -214,14 +214,16 @@ CRITICAL RULES:
 
 CORRECTIVE ACTIONS - TWO DIFFERENT FIELDS:
 
-INTERIM CORRECTIVE ACTIONS (immediate temporary measures):
-- What needs to happen RIGHT NOW to make it safe (within minutes/hours)
-- Use "OPEN - GC to action:" prefix for urgent actions, or "N/A" if no immediate action needed
-- Focus on stopping work, barricading, removing hazards, securing areas
+INTERIM CORRECTIVE ACTIONS (immediate actions taken on-site):
+- What was ACTUALLY DONE during the inspection by inspector/GC/contractors
+- Use past tense describing completed immediate actions
+- If nothing was done immediately, use "N/A"
+- Focus on actions taken to temporarily secure, stop work, remove hazards, barricade
 - Examples:
-  * "OPEN - GC to action: Immediately stop generator use and barricade area until proper grounding installed"
-  * "OPEN - GC to action: Remove broken ladder from site immediately and secure area"
-  * "N/A" (for positive observations or non-urgent issues)
+  * "Area barricaded and workers removed from unsafe zone during inspection"
+  * "Broken ladder removed from site immediately by contractor"
+  * "Generator use stopped and area secured with warning signs"
+  * "N/A" (if no immediate action was taken during inspection)
 
 FINAL CORRECTIVE ACTIONS (permanent long-term solutions):
 - What needs to happen to PERMANENTLY fix the root cause
@@ -232,7 +234,9 @@ FINAL CORRECTIVE ACTIONS (permanent long-term solutions):
   * "OPEN - GC to action: Replace with compliant ladder and update tool approval list"
   * "CLOSED: Continue to reinforce this good practice across all contractors"
 
-IMPORTANT: These are DIFFERENT actions - interim is immediate/temporary, final is long-term/permanent
+IMPORTANT: These are DIFFERENT actions:
+- INTERIM = What was DONE on the spot (past tense, completed actions)
+- FINAL = What NEEDS to be done later (future actions with OPEN/CLOSED status)
 
 QUICK CATEGORIZATION:
 - PPE violations (missing glasses, shorts, wrong footwear) → General: Personal Protective Equipment
