@@ -18,8 +18,8 @@ interface FileBatch {
 }
 
 export const BATCH_CONFIG: BatchConfig = {
-  maxFilesPerBatch: 10, // Speed-optimized: process more files per batch
-  maxSizePerBatch: 25 * 1024 * 1024, // Speed-optimized: 25MB raw (faster processing)
+  maxFilesPerBatch: 6, // Conservative: ensures compressed size stays under 2.5MB
+  maxSizePerBatch: 15 * 1024 * 1024, // Conservative: 15MB raw should compress to ~2MB
 }
 
 export function createBatches(files: File[]): FileBatch[] {

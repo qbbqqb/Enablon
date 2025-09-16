@@ -7,7 +7,7 @@ export interface CompressedFile {
   compressionRatio: number
 }
 
-export async function compressImageFile(file: File, targetSizeKB: number = 1500): Promise<CompressedFile> {
+export async function compressImageFile(file: File, targetSizeKB: number = 400): Promise<CompressedFile> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     const canvas = document.createElement('canvas')
@@ -20,7 +20,7 @@ export async function compressImageFile(file: File, targetSizeKB: number = 1500)
 
     img.onload = () => {
       // Calculate dimensions to fit within limits while maintaining aspect ratio
-      const maxDimension = 1800 // Ultra-high quality for GC documentation
+      const maxDimension = 1200 // Balanced quality for reasonable file sizes
       const scale = Math.min(maxDimension / img.width, maxDimension / img.height, 1)
 
       canvas.width = Math.round(img.width * scale)
@@ -29,8 +29,8 @@ export async function compressImageFile(file: File, targetSizeKB: number = 1500)
       // Draw and compress
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
-      // Start with premium quality for professional documentation
-      let quality = 0.9
+      // Start with good quality that compresses well
+      let quality = 0.7
       const tryCompress = () => {
         canvas.toBlob((blob) => {
           if (!blob) {
@@ -41,7 +41,7 @@ export async function compressImageFile(file: File, targetSizeKB: number = 1500)
           const compressedSize = blob.size
           const targetSize = targetSizeKB * 1024
 
-          if (compressedSize <= targetSize || quality <= 0.7) {
+          if (compressedSize <= targetSize || quality <= 0.4) {
             // Create a new File from the blob
             const compressedFile = new File([blob], file.name, {
               type: 'image/jpeg',
@@ -73,7 +73,7 @@ export async function compressImageFile(file: File, targetSizeKB: number = 1500)
   })
 }
 
-export async function compressFileBatch(files: File[], targetBatchSizeMB: number = 8): Promise<CompressedFile[]> {
+export async function compressFileBatch(files: File[], targetBatchSizeMB: number = 2): Promise<CompressedFile[]> {
   const targetSizePerFileKB = Math.floor((targetBatchSizeMB * 1024) / files.length)
   const compressed: CompressedFile[] = []
 
