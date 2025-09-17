@@ -50,18 +50,20 @@ export async function analyzeImages({
   const numberedNotesCount = countNumberedNotes(notes)
 
   const results = await Promise.all(
-    batches.map((batch, batchIndex) =>
-      // Only pass notes to the first batch if we have numbered notes to avoid duplicate processing
-      processBatch(
+    batches.map((batch, batchIndex) => {
+      const shouldPassNotes = numberedNotesCount > 0 && batchIndex === 0
+      console.log(`Batch ${batchIndex}: passing notes = ${shouldPassNotes ? 'YES' : 'NO'}`)
+
+      return processBatch(
         batch,
         project,
-        (numberedNotesCount > 0 && batchIndex === 0) ? notes : undefined,
+        shouldPassNotes ? notes : undefined,
         batchIndex,
         sessionId,
         batches.length,
         allProjects
       )
-    )
+    })
   )
   
   // Flatten results and maintain original order
@@ -70,13 +72,21 @@ export async function analyzeImages({
     failed.push(...result.failed)
   }
 
-  // Deduplicate observations based on description and location
+  // Always deduplicate observations and enforce expected count
   const expectedCount = countNumberedNotes(notes)
-  if (expectedCount > 0 && observations.length > expectedCount) {
-    console.log(`=== FINAL DEDUPLICATION ===`)
-    console.log(`Total observations before deduplication: ${observations.length}`)
-    console.log(`Expected from numbered notes: ${expectedCount}`)
 
+  console.log(`=== FINAL DEDUPLICATION ===`)
+  console.log(`Total observations from all batches: ${observations.length}`)
+  console.log(`Expected from numbered notes: ${expectedCount}`)
+  console.log(`Number of batches processed: ${results.length}`)
+
+  // Log a sample of observations to see what we have
+  console.log(`First few observation descriptions:`)
+  observations.slice(0, 5).forEach((obs, i) => {
+    console.log(`  ${i + 1}: "${obs['Observation Description']}" in ${obs['Room/Area']}`)
+  })
+
+  if (expectedCount > 0) {
     // Create a map to track unique observations by description + location
     const uniqueObservations = new Map<string, Observation>()
 
@@ -84,19 +94,24 @@ export async function analyzeImages({
       const key = `${obs['Observation Description']}-${obs['Room/Area']}-${obs['Observation Category']}`
       if (!uniqueObservations.has(key)) {
         uniqueObservations.set(key, obs)
+      } else {
+        console.log(`  Skipping duplicate: "${obs['Observation Description']}"`)
       }
     }
 
     const deduplicatedObservations = Array.from(uniqueObservations.values())
     console.log(`After deduplication: ${deduplicatedObservations.length}`)
 
-    // If still too many, take first N to match expected count
+    // Always limit to expected count when we have numbered notes
     const finalObservations = deduplicatedObservations.slice(0, expectedCount)
     console.log(`Final count after limiting to expected: ${finalObservations.length}`)
     console.log(`=== END DEDUPLICATION ===`)
 
     return { observations: finalObservations, failed }
   }
+
+  console.log(`No numbered notes found, returning all ${observations.length} observations`)
+  console.log(`=== END DEDUPLICATION ===`)
 
   return { observations, failed }
 }
