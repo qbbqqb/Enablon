@@ -13,6 +13,10 @@ export const maxDuration = 300 // 5 minutes
 export async function POST(request: NextRequest) {
   try {
     console.log('=== API Request Started ===')
+
+    // Check if this is review mode (returns JSON) or generate mode (returns ZIP)
+    const reviewMode = request.headers.get('X-Mode') === 'review'
+    console.log(`Mode: ${reviewMode ? 'review' : 'generate'}`)
     
     // Parse multipart form data
     const formData = await request.formData()
@@ -109,40 +113,68 @@ export async function POST(request: NextRequest) {
       }
       
       console.log(`Generated ${observations.length} observations, ${aiFailed.length} failed`)
-      
-      if (sessionId) {
-        sendProgressUpdate(sessionId, {
-          id: sessionId,
-          progress: 85,
-          label: 'AI analysis complete. Creating ZIP file...',
-          step: 'zip_creation',
-          details: { processed: observations.length, total: images.length }
+
+      if (reviewMode) {
+        // Review mode: return JSON for client-side review
+        if (sessionId) {
+          sendProgressUpdate(sessionId, {
+            id: sessionId,
+            progress: 100,
+            label: 'Analysis complete - ready for review',
+            step: 'completed',
+            details: { processed: observations.length, total: images.length }
+          })
+        }
+
+        return new Response(JSON.stringify({
+          observations,
+          images: images.slice(0, observations.length), // Only include successfully analyzed images
+          failed,
+          project,
+          totalImages: images.length,
+          processedImages: observations.length
+        }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        })
+      } else {
+        // Generate mode: create and return ZIP file
+        if (sessionId) {
+          sendProgressUpdate(sessionId, {
+            id: sessionId,
+            progress: 85,
+            label: 'AI analysis complete. Creating ZIP file...',
+            step: 'zip_creation',
+            details: { processed: observations.length, total: images.length }
+          })
+        }
+
+        // Step 3: Create ZIP with CSV, photos, manifest, and failed items
+        console.log('Step 3: Building ZIP...')
+        const { archive, manifest } = createZipStream({
+          observations,
+          images: images.slice(0, observations.length), // Only include successfully analyzed images
+          project: project as Project,
+          failed
+        })
+
+        // Convert archive to buffer
+        const zipBuffer = await streamZipToBuffer(archive)
+
+        console.log(`ZIP created: ${zipBuffer.length} bytes, ${manifest.length} files mapped`)
+
+        // Return ZIP file - cast buffer for compatibility
+        return new Response(zipBuffer as BodyInit, {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/zip',
+            'Content-Disposition': `attachment; filename="enablon-observations-${project.toLowerCase()}-${new Date().toISOString().split('T')[0]}.zip"`,
+            'Content-Length': zipBuffer.length.toString()
+          }
         })
       }
-      
-      // Step 3: Create ZIP with CSV, photos, manifest, and failed items
-      console.log('Step 3: Building ZIP...')
-      const { archive, manifest } = createZipStream({
-        observations,
-        images: images.slice(0, observations.length), // Only include successfully analyzed images
-        project: project as Project,
-        failed
-      })
-      
-      // Convert archive to buffer
-      const zipBuffer = await streamZipToBuffer(archive)
-      
-      console.log(`ZIP created: ${zipBuffer.length} bytes, ${manifest.length} files mapped`)
-      
-      // Return ZIP file - cast buffer for compatibility
-      return new Response(zipBuffer as BodyInit, {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/zip',
-          'Content-Disposition': `attachment; filename="enablon-observations-${project.toLowerCase()}-${new Date().toISOString().split('T')[0]}.zip"`,
-          'Content-Length': zipBuffer.length.toString()
-        }
-      })
       
     } catch (processingError) {
       console.error('Processing error:', processingError)

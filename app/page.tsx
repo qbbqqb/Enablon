@@ -148,15 +148,17 @@ export default function Home() {
           formData.append('notes', '') // Empty notes for subsequent batches
         }
         formData.append('sessionId', sessionId)
-        formData.append('batchIndex', i.toString())
-        formData.append('totalBatches', batches.length.toString())
+        // Remove batch-related parameters since /api/generate handles batching internally
         compressedFiles.forEach(cf => formData.append('files', cf.file))
 
         setProgressLabel(`Uploading batch ${i + 1}/${batches.length}...`)
 
-        const response = await fetch('/api/analyze', {
+        const response = await fetch('/api/generate', {
           method: 'POST',
-          body: formData
+          body: formData,
+          headers: {
+            'X-Mode': 'review' // Request review mode instead of ZIP
+          }
         })
 
         if (!response.ok) {
