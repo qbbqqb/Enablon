@@ -72,9 +72,12 @@ export function combineBatchResults(batchResults: BatchResult[]): {
   images: any[]
   failed: any[]
 } {
-  const allObservations: Observation[] = []
   const allImages: any[] = []
   const allFailed: any[] = []
+
+  // Only use observations from the first batch (which has the numbered notes)
+  // All other batches should only contribute their images
+  const observations = batchResults.length > 0 ? batchResults[0].observations : []
 
   batchResults.forEach((result, index) => {
     // Add batch info to failed items for debugging
@@ -83,13 +86,13 @@ export function combineBatchResults(batchResults: BatchResult[]): {
       batch: index + 1
     }))
 
-    allObservations.push(...result.observations)
+    // Always include images from all batches
     allImages.push(...result.images)
     allFailed.push(...failedWithBatch)
   })
 
   return {
-    observations: allObservations,
+    observations,
     images: allImages,
     failed: allFailed
   }
