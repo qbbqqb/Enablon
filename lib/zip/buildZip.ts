@@ -2,7 +2,7 @@ import archiver from 'archiver'
 import type { Observation, ProcessedImage, ManifestEntry, FailedItem } from '../types'
 import type { Project } from '../constants/enums'
 import { buildCSV } from '../csv/buildCsv'
-import { generatePhotoFilename, deduplicateFilename, slugFromOriginalName } from '../files/rename'
+import { generatePhotoFilename, deduplicateFilename } from '../files/rename'
 
 export interface ZipContentInput {
   observations: Observation[]
@@ -38,16 +38,7 @@ export function createZipStream(input: ZipContentInput): {
     // Use the project code from the observation itself for multi-project scenarios
     const obsProject = (obs.Project as Project) || project
     const baseFilename = generatePhotoFilename(obsProject, index + 1, obs)
-
-    // Add a short slug from the source image filename to reduce confusion
-    // when ordering doesn't perfectly align with observation context
-    const srcSlug = slugFromOriginalName(image.originalName || `image-${index + 1}.jpg`)
-    const parts = baseFilename.split('.')
-    const ext = parts.pop() || 'jpg'
-    const nameNoExt = parts.join('.')
-    const withSrc = `${nameNoExt}-src-${srcSlug}.${ext}`
-
-    const finalFilename = deduplicateFilename(withSrc, usedFilenames)
+    const finalFilename = deduplicateFilename(baseFilename, usedFilenames)
     usedFilenames.add(finalFilename)
 
     // Add image to photos/ directory

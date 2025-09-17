@@ -36,6 +36,10 @@ OUTPUT: Return ONLY a JSON array of observations. Each observation must have the
 - "Worst Potential Severity": ("Minor (7 Days)", "Potentially Serious/Serious (Immediate)", "Positive Observation")
 - "Person Notified": ""
 
+Additionally include for internal pairing (these are optional and will NOT be in CSV):
+- "photo_index": (1-based index of the single most relevant photo from the provided image list)
+- "photo_indices": (array of 1-based indices if multiple photos relate to the observation)
+
 Return ONLY the JSON array, no markdown, no explanation.`
 
   const imageDataUrls = images.map(img =>
