@@ -35,9 +35,7 @@ export default function Home() {
   // Cleanup EventSource on component unmount
   useEffect(() => {
     return () => {
-      if (eventSource) {
-        eventSource.close()
-      }
+      eventSource?.close()
     }
   }, [eventSource])
 
@@ -129,10 +127,8 @@ export default function Home() {
       setProgressLabel(`Analysis complete - ${result.observations?.length || 0} observations ready for review`)
 
       // Close SSE connection
-      if (eventSource) {
-        eventSource.close()
-        setEventSource(null)
-      }
+      eventSource?.close()
+      setEventSource(null)
 
       return // Skip all complex batch processing below
 
@@ -230,10 +226,8 @@ export default function Home() {
       setProcessedImages(combinedResults.images)
 
       // Close SSE connection
-      if (eventSource) {
-        eventSource.close()
-        setEventSource(null)
-      }
+      eventSource?.close()
+      setEventSource(null)
 
       setIsProcessing(false)
       setShowReview(true)
