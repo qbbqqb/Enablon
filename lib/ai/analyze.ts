@@ -255,14 +255,15 @@ async function processBatch(
     // Validate and repair each observation
     const observations: Observation[] = []
     const failed: FailedItem[] = []
-    
-    for (let i = 0; i < batch.length; i++) {
+
+    // Process all AI observations, not just one per image
+    for (let i = 0; i < rawObservations.length; i++) {
       try {
         const repaired = validateAndRepairObservation(rawObservations[i], project, allProjects)
         observations.push(repaired)
       } catch (error) {
         failed.push({
-          originalFilename: batch[i].originalName,
+          originalFilename: `observation_${i + 1}`,
           reason: `AI analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
           step: 'ai_analysis'
         })

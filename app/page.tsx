@@ -96,7 +96,53 @@ export default function Home() {
         return
       }
 
-      // Create batches for processing
+      // Check for numbered notes - if found, use single request instead of batching
+      const numberedNotesCount = notes.match(/(?:^|\n)\s*\d+\./g)?.length || 0
+      console.log(`Numbered notes detected: ${numberedNotesCount}`)
+
+      if (numberedNotesCount > 0) {
+        // Single request for numbered notes
+        console.log(`Processing ${files.length} files in single request for ${numberedNotesCount} numbered notes`)
+
+        setProgressLabel('Uploading all files...')
+        setProgress(10)
+
+        const formData = new FormData()
+        formData.append('project', projectToUse)
+        formData.append('notes', notes)
+        formData.append('sessionId', sessionId)
+        files.forEach(file => formData.append('files', file))
+
+        const response = await fetch('/api/generate', {
+          method: 'POST',
+          body: formData,
+          headers: {
+            'X-Mode': 'review'
+          }
+        })
+
+        if (!response.ok) {
+          throw new Error(`Processing failed: Server error ${response.status}`)
+        }
+
+        const result = await response.json()
+        console.log(`Single request completed: ${result.observations?.length || 0} observations`)
+
+        setObservations(result.observations || [])
+        setProcessedImages(result.images || [])
+        setProgress(100)
+        setProgressLabel(`Analysis complete - ${result.observations?.length || 0} observations ready for review`)
+
+        // Close SSE connection
+        if (eventSource) {
+          eventSource.close()
+          setEventSource(null)
+        }
+
+        return // Skip batch processing
+      }
+
+      // Fallback to batch processing for non-numbered notes
       const batches = createBatches(files)
       const totalFiles = files.reduce((sum, file) => sum + file.size, 0)
       const estimatedTime = estimateBatchProcessingTime(batches)
