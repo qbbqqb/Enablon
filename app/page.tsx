@@ -125,6 +125,8 @@ export default function Home() {
       setProcessedImages(result.images || [])
       setProgress(100)
       setProgressLabel(`Analysis complete - ${result.observations?.length || 0} observations ready for review`)
+      setIsProcessing(false)
+      setShowReview(true)
 
       // Close SSE connection
       eventSource?.close()
