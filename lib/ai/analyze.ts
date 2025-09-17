@@ -79,6 +79,24 @@ function countNumberedNotes(notes?: string): number {
   return count
 }
 
+// Helper function to estimate unique safety issues from unstructured notes
+function estimateUniqueIssues(notes?: string): number {
+  if (!notes) return 0
+
+  // Look for location indicators that suggest separate issues
+  const locationMatches = notes.match(/(?:GVX\d+|COLO\d+|CELL\d+)\s+[^.]*?(?:\.|$)/gi) || []
+  const sentenceCount = notes.split(/[.!]/).filter(s => s.trim().length > 10).length
+
+  console.log(`=== UNIQUE ISSUE ESTIMATION ===`)
+  console.log(`Location-based segments:`, locationMatches.length)
+  console.log(`Substantial sentences:`, sentenceCount)
+  console.log(`Estimated unique issues:`, Math.min(locationMatches.length || sentenceCount, Math.ceil(sentenceCount / 2)))
+  console.log(`=== END ESTIMATION ===`)
+
+  // Conservative estimate: fewer issues than sentences to prevent over-creation
+  return Math.min(locationMatches.length || sentenceCount, Math.ceil(sentenceCount / 2))
+}
+
 async function processBatch(
   batch: ProcessedImage[],
   project: Project,
@@ -137,34 +155,36 @@ async function processBatch(
       throw new Error(`AI returned non-array response`)
     }
     
-    // Validate observation count against numbered notes
-    const expectedObservations = countNumberedNotes(notes)
+    // Validate observation count against numbered notes or unique issues
+    const numberedCount = countNumberedNotes(notes)
+    const estimatedIssues = estimateUniqueIssues(notes)
+    const expectedObservations = numberedCount > 0 ? numberedCount : estimatedIssues
+
     console.log(`=== VALIDATION DEBUG ===`)
     console.log(`Notes provided:`, notes ? 'YES' : 'NO')
     console.log(`Notes content preview:`, notes ? notes.substring(0, 200) + '...' : 'N/A')
-    console.log(`Expected observations from numbered notes: ${expectedObservations}`)
+    console.log(`Numbered notes found: ${numberedCount}`)
+    console.log(`Estimated unique issues: ${estimatedIssues}`)
+    console.log(`Expected observations: ${expectedObservations}`)
     console.log(`AI returned observations: ${rawObservations.length}`)
     console.log(`Images in batch: ${batch.length}`)
     console.log(`Batch index: ${batchIndex}`)
 
-    if (expectedObservations > 0) {
-      console.log(`✓ Found ${expectedObservations} numbered notes in inspector notes`)
-      if (rawObservations.length > expectedObservations) {
-        console.warn(`⚠️  ENFORCING GROUPING: AI created ${rawObservations.length} observations but notes only contain ${expectedObservations} numbered items.`)
-        console.warn(`⚠️  TRUNCATING to first ${expectedObservations} observations to match numbered notes.`)
-        // Truncate to match expected count
-        rawObservations = rawObservations.slice(0, expectedObservations)
-        console.log(`✓ After truncation: ${rawObservations.length} observations`)
-      } else if (rawObservations.length === expectedObservations) {
-        console.log(`✓ Perfect match: ${rawObservations.length} observations for ${expectedObservations} numbered notes`)
+    if (expectedObservations > 0 && rawObservations.length > expectedObservations) {
+      if (numberedCount > 0) {
+        console.warn(`⚠️  ENFORCING NUMBERED NOTES: AI created ${rawObservations.length} observations but notes only contain ${numberedCount} numbered items.`)
       } else {
-        console.warn(`⚠️  AI created fewer observations (${rawObservations.length}) than numbered notes (${expectedObservations})`)
+        console.warn(`⚠️  ENFORCING UNIQUE ISSUES: AI created ${rawObservations.length} observations but estimated only ${estimatedIssues} unique safety issues.`)
       }
+      console.warn(`⚠️  TRUNCATING to first ${expectedObservations} observations to prevent duplicates.`)
+      rawObservations = rawObservations.slice(0, expectedObservations)
+      console.log(`✓ After truncation: ${rawObservations.length} observations`)
+    } else if (expectedObservations > 0 && rawObservations.length === expectedObservations) {
+      console.log(`✓ Perfect match: ${rawObservations.length} observations for ${expectedObservations} expected issues`)
+    } else if (expectedObservations === 0) {
+      console.log(`No structured notes found, allowing ${rawObservations.length} observations for ${batch.length} images`)
     } else {
-      console.log(`No numbered notes found, allowing ${rawObservations.length} observations for ${batch.length} images`)
-      if (rawObservations.length !== batch.length) {
-        console.warn(`AI returned ${rawObservations.length} observations for ${batch.length} images`)
-      }
+      console.warn(`⚠️  AI created fewer observations (${rawObservations.length}) than expected (${expectedObservations})`)
     }
     console.log(`=== END VALIDATION ===`)
     
@@ -204,9 +224,17 @@ function buildAIPrompt(project: Project, notes?: string, allProjects?: Project[]
   
   return `Role: construction safety inspector producing Compass/Enablon rows
 
-MANDATORY FIRST STEP: If inspector notes contain numbered items (1, 2, 3, etc.), count them. Your output must contain EXACTLY that many observations - never more.
+MANDATORY FIRST STEP: Identify UNIQUE safety issues from the notes and photos. Each unique safety issue = ONE observation only.
 
-ABSOLUTE RULE: ONE NUMBERED NOTE = ONE OBSERVATION. Multiple photos of the same issue = ONE OBSERVATION.
+ABSOLUTE RULE: ONE UNIQUE SAFETY ISSUE = ONE OBSERVATION. Do not create multiple observations for the same safety issue.
+
+CRITICAL: If notes don't have numbered items, identify unique safety issues by location, type, and responsible party:
+- "COLO2 walkway barrier issue" = 1 unique issue = 1 observation
+- "COLO3 electrical panel barrier" = 1 unique issue = 1 observation
+- "AED positive observation" = 1 unique issue = 1 observation
+- Result: 3 unique issues = exactly 3 observations (not 9)
+
+ANTI-DUPLICATION RULE: Never create multiple observations that describe the same safety issue in the same location with the same root cause. Each distinct safety problem should only appear once in your output.
 
 CRITICAL ANALYSIS INSTRUCTIONS:
 - Create professional, contractor-ready observations suitable for direct sending to subcontractors/GCs
