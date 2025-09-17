@@ -167,7 +167,7 @@ export default function Home() {
           compressedFiles = await compressFileBatch(batch.files, 2.5) // Target 2.5MB per batch
         } catch (error) {
           console.error(`Failed to compress batch ${i + 1}:`, error)
-          throw new Error(`Batch ${i + 1} compression failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+          throw new Error(`Batch ${i + 1} compression failed: ${(error as Error)?.message || 'Unknown error'}`)
         }
 
         const totalCompressedSize = compressedFiles.reduce((sum, cf) => sum + cf.compressedSize, 0)
