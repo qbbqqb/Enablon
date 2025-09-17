@@ -49,22 +49,38 @@ export async function analyzeImages({
   const concurrency = CONSTANTS.AI_CONCURRENCY
   const numberedNotesCount = countNumberedNotes(notes)
 
-  const results = await Promise.all(
-    batches.map((batch, batchIndex) => {
-      const shouldPassNotes = numberedNotesCount > 0 && batchIndex === 0
-      console.log(`Batch ${batchIndex}: passing notes = ${shouldPassNotes ? 'YES' : 'NO'}`)
+  let results: { observations: Observation[], failed: FailedItem[] }[]
 
-      return processBatch(
-        batch,
-        project,
-        shouldPassNotes ? notes : undefined,
-        batchIndex,
-        sessionId,
-        batches.length,
-        allProjects
-      )
-    })
-  )
+  if (numberedNotesCount > 0) {
+    // When we have numbered notes, only process the first batch
+    console.log(`Found ${numberedNotesCount} numbered notes - processing only first batch`)
+    const firstBatchResult = await processBatch(
+      batches[0],
+      project,
+      notes,
+      0,
+      sessionId,
+      1, // totalBatches = 1 since we're only processing first batch
+      allProjects
+    )
+    results = [firstBatchResult]
+  } else {
+    // No numbered notes - process all batches normally
+    console.log(`No numbered notes found - processing all ${batches.length} batches`)
+    results = await Promise.all(
+      batches.map((batch, batchIndex) => {
+        return processBatch(
+          batch,
+          project,
+          undefined,
+          batchIndex,
+          sessionId,
+          batches.length,
+          allProjects
+        )
+      })
+    )
+  }
   
   // Flatten results and maintain original order
   for (const result of results) {
