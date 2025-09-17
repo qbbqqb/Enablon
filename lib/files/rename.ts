@@ -89,3 +89,18 @@ export function deduplicateFilename(filename: string, existingFilenames: Set<str
   
   return newFilename
 }
+
+// Create a short, safe slug from an original photo filename
+export function slugFromOriginalName(name: string, maxLength: number = 24): string {
+  const base = name.replace(/\.[^.]+$/, '') // drop extension
+  let slug = base
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+  if (slug.length > maxLength) {
+    slug = slug.substring(0, maxLength).replace(/-[^-]*$/, '')
+  }
+  return slug || 'img'
+}
