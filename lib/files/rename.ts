@@ -91,8 +91,24 @@ export function deduplicateFilename(filename: string, existingFilenames: Set<str
 }
 
 // Create a short, safe slug from an original photo filename
-export function slugFromOriginalName(name: string, maxLength: number = 24): string {
+export function slugFromOriginalName(name: string, maxLength: number = 40): string {
   const base = name.replace(/\.[^.]+$/, '') // drop extension
+
+  // Special handling for common WhatsApp naming pattern
+  // e.g., "WhatsApp Image 2025-09-16 at 18.10.59 (13).jpeg"
+  const wa = /whatsapp\s*image\s*(\d{4})-(\d{2})-(\d{2}).*?(\d{2})\.(\d{2})\.(\d{2})(?:.*?\((\d+)\))?/i.exec(base)
+  if (wa) {
+    const [_, y, m, d, hh, mm, ss, idx] = wa
+    const parts = [
+      'wa',
+      `${y}${m}${d}`,
+      `${hh}${mm}${ss}`,
+      idx || ''
+    ].filter(Boolean)
+    return parts.join('-')
+  }
+
+  // Generic slug fallback
   let slug = base
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, ' ')

@@ -129,15 +129,34 @@ export async function POST(request: NextRequest) {
 
     // Step 2: Simple AI call - no batching, no complex logic
     console.log('Calling AI...')
-    const observations = await callSimpleAI(images, project as Project, notes || undefined)
+    const observations: any[] = await callSimpleAI(images, project as Project, notes || undefined)
 
     console.log(`Got ${observations.length} observations from AI`)
 
     if (mode === 'review') {
+      // Attempt to map each observation to the best matching photo based on
+      // optional fields the model may include: photo_index (1-based) or
+      // photo_indices (array). Fall back to same-index pairing.
+      const selectedImages = observations.map((obs: any, i: number) => {
+        let idx: number | undefined
+        if (typeof obs?.photo_index === 'number') idx = obs.photo_index - 1
+        if (!idx && Array.isArray(obs?.photo_indices) && obs.photo_indices.length > 0) {
+          const first = obs.photo_indices[0]
+          if (typeof first === 'number') idx = first - 1
+        }
+        if (!idx && Array.isArray(obs?.photoIndexes) && obs.photoIndexes.length > 0) {
+          const first = obs.photoIndexes[0]
+          if (typeof first === 'number') idx = first - 1
+        }
+        if (typeof idx !== 'number' || idx < 0 || idx >= images.length) {
+          idx = i
+        }
+        return images[idx]
+      })
       // Return JSON for review
       return new Response(JSON.stringify({
         observations,
-        images: images.slice(0, observations.length),
+        images: selectedImages,
         failed,
         project,
         totalImages: images.length,
