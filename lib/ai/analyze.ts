@@ -162,12 +162,12 @@ function buildAIPrompt(project: Project, notes?: string, allProjects?: Project[]
   return `Role: construction safety inspector producing Compass/Enablon rows
 
 CRITICAL ANALYSIS INSTRUCTIONS:
-- Analyze EACH photo individually and describe exactly what you see in THAT specific photo
-- Be very specific about the exact safety issue visible in each image
-- If multiple photos show different safety issues, create separate observations for each
-- Description must match the actual visible content of the photo, not generic safety issues
-- Use specific details like "scaffolding materials", "ladder placement", "cable positioning", etc.
-- Output: STRICT JSON array; one object per image in exact input order; no extra fields; British English
+- Create professional, contractor-ready observations suitable for direct sending to subcontractors/GCs
+- Use the inspector's notes to group related photos into single observations where appropriate
+- NEVER mention "image", "photo", "visible", "observed", or "The image shows" - write direct statements
+- Write concise, actionable descriptions focusing on the safety issue and location
+- If inspector notes indicate multiple photos for same issue, create ONE observation referencing multiple photos
+- Output: STRICT JSON array; one object per UNIQUE safety issue; no extra fields; British English
 
 Timezone: Europe/Stockholm; Notification Date = ${notificationDate}
 
@@ -189,7 +189,12 @@ ${notes ? `
 CONTEXT NOTES FROM SAFETY INSPECTOR:
 ${notes}
 
-IMPORTANT: Use these context notes to enhance your analysis. If notes mention specific locations, personnel, or actions taken, incorporate this information into your descriptions and categorization.${allProjects && allProjects.length > 1 ? ' Pay special attention to project-specific mentions (e.g., GVX04 loading bay, GVX03 warehouse) and assign observations to the correct project.' : ''}` : ''}
+CRITICAL: Use these inspector notes as the PRIMARY SOURCE for observations. Match each numbered note to photos:
+- If multiple photos relate to one numbered note, create ONE observation
+- Use the exact location details from notes (e.g., "COLO3 CELL1", "Externals South")
+- Include contractor names when mentioned (e.g., "Jones Engineering", "Salboheds")
+- Use the inspector's description as the basis, don't rewrite their findings
+- Professional tone suitable for direct contractor communication${allProjects && allProjects.length > 1 ? ' Pay special attention to project-specific mentions and assign observations to the correct project.' : ''}` : ''}
 
 Use only these enumerations:
 
@@ -248,15 +253,20 @@ QUICK CATEGORIZATION:
 - Rebar without caps → General: Walking, Working Surfaces
 - Barriers down/broken → General: Barricades
 
-INTELLIGENT PHOTO-CONTEXT MATCHING:
-- Analyze each photo and match it with relevant parts of the context notes
-- If notes mention "delivery driver without PPE" - match this to the photo showing the person
-- If notes mention "AED station properly mounted" - match this to the photo of the AED
-- If notes mention "materials on damaged pallets" - match this to the housekeeping photo
-- Use location details from notes (COLO5, Loading bay, electrical room, etc.) for accurate Room/Area
-- If immediate corrections mentioned, note in Interim Corrective Actions
-- Include personnel context (contractors, delivery drivers, EHS team) in descriptions
-- Distinguish positive observations from at-risk situations automatically
+PROFESSIONAL WRITING REQUIREMENTS:
+- Write like a construction safety professional communicating with contractors
+- Use direct, clear language that requires no editing before sending to subcontractors
+- Avoid unnecessary words: "appears to be", "seems to", "potentially", "could be"
+- Never use: "image", "photo", "visible", "observed", "The image shows", "can be seen"
+- Write statements as facts: "Scaffolding materials stored on North Spine Road" not "Materials are observed to be stored"
+- Include specific locations from inspector notes: exact COLO areas, room numbers, contractor names
+- Keep descriptions concise but complete - ready for immediate contractor action
+
+PHOTO-CONTEXT MATCHING:
+- Match inspector's numbered notes (1-13) with corresponding photos (1-15)
+- If multiple photos relate to one numbered note, create ONE observation
+- Use exact wording from inspector notes for locations and contractor names
+- Group related photos: if notes mention one issue but you have 2 photos, combine into single observation
 
 Return exactly 15 fields per object matching these headers:
 Project, Room/Area, Comments, Observation Category, Observation Description, Responsible Party, Interim Corrective Actions, Final Corrective Actions, Category Type, Phase of Construction, Notification Date, High Risk + Significant Exposure, General Category, Worst Potential Severity, Person Notified
