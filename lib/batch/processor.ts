@@ -75,7 +75,7 @@ export function combineBatchResults(batchResults: BatchResult[]): {
   const allImages: any[] = []
   const allFailed: any[] = []
 
-  // Only use observations from the first batch (which has the numbered notes)
+  // Only use observations from the first batch (which contains numbered notes or all observations)
   // All other batches should only contribute their images
   const observations = batchResults.length > 0 ? batchResults[0].observations : []
 

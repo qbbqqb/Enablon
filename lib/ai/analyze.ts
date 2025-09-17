@@ -40,47 +40,41 @@ export async function analyzeImages({
   // Process images in micro-batches
   const batchSize = CONSTANTS.AI_BATCH_SIZE
   const batches: ProcessedImage[][] = []
-  
-  for (let i = 0; i < images.length; i += batchSize) {
-    batches.push(images.slice(i, i + batchSize))
+  const numberedNotesCount = countNumberedNotes(notes)
+
+  if (numberedNotesCount > 0) {
+    // When we have numbered notes, put ALL images in first batch for comprehensive analysis
+    // This allows AI to map each numbered note to the correct photos
+    console.log(`Found ${numberedNotesCount} numbered notes - putting all ${images.length} images in single batch`)
+    batches.push(images)
+  } else {
+    // No numbered notes - use normal batching
+    for (let i = 0; i < images.length; i += batchSize) {
+      batches.push(images.slice(i, i + batchSize))
+    }
   }
   
   // Process batches with concurrency limit
   const concurrency = CONSTANTS.AI_CONCURRENCY
-  const numberedNotesCount = countNumberedNotes(notes)
 
-  let results: { observations: Observation[], failed: FailedItem[] }[]
+  // Process all batches but handle numbered notes specially
+  const results = await Promise.all(
+    batches.map((batch, batchIndex) => {
+      // Only pass notes to first batch to create structured observations
+      const shouldPassNotes = numberedNotesCount > 0 && batchIndex === 0
+      console.log(`Batch ${batchIndex}: passing notes = ${shouldPassNotes ? 'YES' : 'NO'}`)
 
-  if (numberedNotesCount > 0) {
-    // When we have numbered notes, only process the first batch
-    console.log(`Found ${numberedNotesCount} numbered notes - processing only first batch`)
-    const firstBatchResult = await processBatch(
-      batches[0],
-      project,
-      notes,
-      0,
-      sessionId,
-      1, // totalBatches = 1 since we're only processing first batch
-      allProjects
-    )
-    results = [firstBatchResult]
-  } else {
-    // No numbered notes - process all batches normally
-    console.log(`No numbered notes found - processing all ${batches.length} batches`)
-    results = await Promise.all(
-      batches.map((batch, batchIndex) => {
-        return processBatch(
-          batch,
-          project,
-          undefined,
-          batchIndex,
-          sessionId,
-          batches.length,
-          allProjects
-        )
-      })
-    )
-  }
+      return processBatch(
+        batch,
+        project,
+        shouldPassNotes ? notes : undefined,
+        batchIndex,
+        sessionId,
+        batches.length,
+        allProjects
+      )
+    })
+  )
   
   // Flatten results and maintain original order
   for (const result of results) {
