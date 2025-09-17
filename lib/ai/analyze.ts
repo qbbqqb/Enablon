@@ -47,9 +47,20 @@ export async function analyzeImages({
   
   // Process batches with concurrency limit
   const concurrency = CONSTANTS.AI_CONCURRENCY
+  const numberedNotesCount = countNumberedNotes(notes)
+
   const results = await Promise.all(
-    batches.map((batch, batchIndex) => 
-      processBatch(batch, project, notes, batchIndex, sessionId, batches.length, allProjects)
+    batches.map((batch, batchIndex) =>
+      // Only pass notes to the first batch if we have numbered notes to avoid duplicate processing
+      processBatch(
+        batch,
+        project,
+        (numberedNotesCount > 0 && batchIndex === 0) ? notes : undefined,
+        batchIndex,
+        sessionId,
+        batches.length,
+        allProjects
+      )
     )
   )
   
@@ -58,7 +69,35 @@ export async function analyzeImages({
     observations.push(...result.observations)
     failed.push(...result.failed)
   }
-  
+
+  // Deduplicate observations based on description and location
+  const expectedCount = countNumberedNotes(notes)
+  if (expectedCount > 0 && observations.length > expectedCount) {
+    console.log(`=== FINAL DEDUPLICATION ===`)
+    console.log(`Total observations before deduplication: ${observations.length}`)
+    console.log(`Expected from numbered notes: ${expectedCount}`)
+
+    // Create a map to track unique observations by description + location
+    const uniqueObservations = new Map<string, Observation>()
+
+    for (const obs of observations) {
+      const key = `${obs['Observation Description']}-${obs['Room/Area']}-${obs['Observation Category']}`
+      if (!uniqueObservations.has(key)) {
+        uniqueObservations.set(key, obs)
+      }
+    }
+
+    const deduplicatedObservations = Array.from(uniqueObservations.values())
+    console.log(`After deduplication: ${deduplicatedObservations.length}`)
+
+    // If still too many, take first N to match expected count
+    const finalObservations = deduplicatedObservations.slice(0, expectedCount)
+    console.log(`Final count after limiting to expected: ${finalObservations.length}`)
+    console.log(`=== END DEDUPLICATION ===`)
+
+    return { observations: finalObservations, failed }
+  }
+
   return { observations, failed }
 }
 
