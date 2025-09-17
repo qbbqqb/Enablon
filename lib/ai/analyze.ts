@@ -66,9 +66,17 @@ export async function analyzeImages({
 function countNumberedNotes(notes?: string): number {
   if (!notes) return 0
 
-  // Match patterns like "1.", "2.", "3." etc. at the start of lines
-  const numberedMatches = notes.match(/^\d+\./gm)
-  return numberedMatches ? numberedMatches.length : 0
+  // Match patterns like "1.", "2.", "3." etc. at the start of lines or after whitespace
+  const numberedMatches = notes.match(/(?:^|\n)\s*\d+\./g)
+  const count = numberedMatches ? numberedMatches.length : 0
+
+  console.log(`=== NOTE COUNTING DEBUG ===`)
+  console.log(`Notes length: ${notes.length}`)
+  console.log(`Matches found:`, numberedMatches)
+  console.log(`Count: ${count}`)
+  console.log(`=== END NOTE COUNTING ===`)
+
+  return count
 }
 
 async function processBatch(
@@ -131,18 +139,34 @@ async function processBatch(
     
     // Validate observation count against numbered notes
     const expectedObservations = countNumberedNotes(notes)
-    console.log(`AI returned ${rawObservations.length} observations for ${batch.length} images in batch ${batchIndex}`)
+    console.log(`=== VALIDATION DEBUG ===`)
+    console.log(`Notes provided:`, notes ? 'YES' : 'NO')
+    console.log(`Notes content preview:`, notes ? notes.substring(0, 200) + '...' : 'N/A')
+    console.log(`Expected observations from numbered notes: ${expectedObservations}`)
+    console.log(`AI returned observations: ${rawObservations.length}`)
+    console.log(`Images in batch: ${batch.length}`)
+    console.log(`Batch index: ${batchIndex}`)
 
     if (expectedObservations > 0) {
-      console.log(`Expected ${expectedObservations} observations based on numbered notes`)
+      console.log(`✓ Found ${expectedObservations} numbered notes in inspector notes`)
       if (rawObservations.length > expectedObservations) {
-        console.warn(`Warning: AI created ${rawObservations.length} observations but notes only contain ${expectedObservations} numbered items. Taking first ${expectedObservations} observations.`)
+        console.warn(`⚠️  ENFORCING GROUPING: AI created ${rawObservations.length} observations but notes only contain ${expectedObservations} numbered items.`)
+        console.warn(`⚠️  TRUNCATING to first ${expectedObservations} observations to match numbered notes.`)
         // Truncate to match expected count
         rawObservations = rawObservations.slice(0, expectedObservations)
+        console.log(`✓ After truncation: ${rawObservations.length} observations`)
+      } else if (rawObservations.length === expectedObservations) {
+        console.log(`✓ Perfect match: ${rawObservations.length} observations for ${expectedObservations} numbered notes`)
+      } else {
+        console.warn(`⚠️  AI created fewer observations (${rawObservations.length}) than numbered notes (${expectedObservations})`)
       }
-    } else if (rawObservations.length !== batch.length) {
-      console.warn(`AI returned ${rawObservations.length} observations for ${batch.length} images`)
+    } else {
+      console.log(`No numbered notes found, allowing ${rawObservations.length} observations for ${batch.length} images`)
+      if (rawObservations.length !== batch.length) {
+        console.warn(`AI returned ${rawObservations.length} observations for ${batch.length} images`)
+      }
     }
+    console.log(`=== END VALIDATION ===`)
     
     // Validate and repair each observation
     const observations: Observation[] = []
@@ -182,6 +206,8 @@ function buildAIPrompt(project: Project, notes?: string, allProjects?: Project[]
 
 MANDATORY FIRST STEP: If inspector notes contain numbered items (1, 2, 3, etc.), count them. Your output must contain EXACTLY that many observations - never more.
 
+ABSOLUTE RULE: ONE NUMBERED NOTE = ONE OBSERVATION. Multiple photos of the same issue = ONE OBSERVATION.
+
 CRITICAL ANALYSIS INSTRUCTIONS:
 - Create professional, contractor-ready observations suitable for direct sending to subcontractors/GCs
 - Use the inspector's notes to group related photos into single observations where appropriate
@@ -212,6 +238,13 @@ ${notes}
 
 CRITICAL GROUPING REQUIREMENT: Count the numbered items in the notes below. Create EXACTLY that many observations.
 Example: Notes contain items 1-13 → Output exactly 13 observations (never 15, never more than the note count)
+
+GROUPING EXAMPLE:
+Inspector Notes: "1. PPE violation in COLO3" + Photos 1,2,3 showing same worker → Create 1 observation
+Inspector Notes: "2. Scaffolding materials on road" + Photos 4,5 showing same materials → Create 1 observation
+Result: 2 numbered notes = 2 observations total (not 5 observations)
+
+YOU MUST NEVER CREATE MORE OBSERVATIONS THAN NUMBERED NOTES. This is the most critical rule.
 
 CRITICAL: Use these inspector notes as the PRIMARY SOURCE for observations. Match each numbered note to photos:
 - ONE numbered note = ONE observation (even if multiple photos show the same issue)
@@ -305,6 +338,8 @@ MANDATORY: If inspector provides 13 numbered notes, output exactly 13 observatio
 
 Return exactly 15 fields per object matching these headers:
 Project, Room/Area, Comments, Observation Category, Observation Description, Responsible Party, Interim Corrective Actions, Final Corrective Actions, Category Type, Phase of Construction, Notification Date, High Risk + Significant Exposure, General Category, Worst Potential Severity, Person Notified
+
+FINAL VALIDATION: Before outputting, count your observations. If you have more observations than numbered notes, you have made an error.
 
 Return only JSON: [ {15-field object}, ... ]`
 }
