@@ -51,13 +51,16 @@ Return ONLY the JSON array, no markdown, no explanation.`
       'X-Title': process.env.OPENROUTER_APP_NAME || 'Enablon Observation Bundler'
     },
     body: JSON.stringify({
-      model: 'google/gemini-2.0-flash-exp:free',
+      // Use a generally available multimodal model. The previous
+      // `gemini-2.0-flash-exp:free` route can return 404 (model not found).
+      model: 'google/gemini-2.5-flash',
       messages: [
         {
           role: 'user',
           content: [
             { type: 'text', text: prompt },
-            ...imageDataUrls.map(url => ({ type: 'image_url', image_url: { url } }))
+            // OpenAI-compatible content format supported by OpenRouter
+            ...imageDataUrls.map(url => ({ type: 'image_url', image_url: url }))
           ]
         }
       ],
@@ -67,7 +70,8 @@ Return ONLY the JSON array, no markdown, no explanation.`
   })
 
   if (!response.ok) {
-    throw new Error(`OpenRouter API error: ${response.status} ${response.statusText}`)
+    const text = await response.text().catch(() => '')
+    throw new Error(`OpenRouter API error: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`)
   }
 
   const data = await response.json()
