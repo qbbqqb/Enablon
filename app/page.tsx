@@ -7,6 +7,7 @@ import ObservationReview from '@/components/observation-review'
 import { detectProjectFromNotes, detectAllProjectsFromNotes } from '@/lib/utils/projectDetection'
 import { createBatches, combineBatchResults, estimateBatchProcessingTime, getBatchProgressRange } from '@/lib/batch/processor'
 import { compressFileBatch } from '@/lib/client/compress'
+import type { CompressedFile } from '@/lib/client/compress'
 import type { Project } from '@/lib/constants/enums'
 import { PROJECTS } from '@/lib/constants/enums'
 import type { Observation } from '@/lib/types'
@@ -162,7 +163,7 @@ export default function Home() {
         setProgressLabel(`Compressing batch ${i + 1}/${batches.length}...`)
         setProgress(progressRange.start)
 
-        let compressedFiles
+        let compressedFiles: CompressedFile[]
         try {
           compressedFiles = await compressFileBatch(batch.files, 2.5) // Target 2.5MB per batch
         } catch (error) {
@@ -170,7 +171,7 @@ export default function Home() {
           throw new Error(`Batch ${i + 1} compression failed: ${(error as Error)?.message || 'Unknown error'}`)
         }
 
-        const totalCompressedSize = compressedFiles.reduce((sum, cf) => sum + cf.compressedSize, 0)
+        const totalCompressedSize = compressedFiles.reduce((sum: number, cf) => sum + cf.compressedSize, 0)
         console.log(`Batch ${i + 1} compressed: ${(totalCompressedSize / 1024 / 1024).toFixed(2)}MB`)
 
         if (totalCompressedSize > 2.5 * 1024 * 1024) { // 2.5MB safety limit
