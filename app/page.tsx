@@ -141,7 +141,12 @@ export default function Home() {
 
         const formData = new FormData()
         formData.append('project', projectToUse)
-        formData.append('notes', notes)
+        // Only send notes to the first batch to prevent duplicate observations
+        if (i === 0) {
+          formData.append('notes', notes)
+        } else {
+          formData.append('notes', '') // Empty notes for subsequent batches
+        }
         formData.append('sessionId', sessionId)
         formData.append('batchIndex', i.toString())
         formData.append('totalBatches', batches.length.toString())
