@@ -62,9 +62,18 @@ export async function analyzeImages({
   return { observations, failed }
 }
 
+// Helper function to count numbered notes in inspector notes
+function countNumberedNotes(notes?: string): number {
+  if (!notes) return 0
+
+  // Match patterns like "1.", "2.", "3." etc. at the start of lines
+  const numberedMatches = notes.match(/^\d+\./gm)
+  return numberedMatches ? numberedMatches.length : 0
+}
+
 async function processBatch(
-  batch: ProcessedImage[], 
-  project: Project, 
+  batch: ProcessedImage[],
+  project: Project,
   notes: string | undefined,
   batchIndex: number,
   sessionId?: string,
@@ -120,9 +129,19 @@ async function processBatch(
       throw new Error(`AI returned non-array response`)
     }
     
-    if (rawObservations.length !== batch.length) {
+    // Validate observation count against numbered notes
+    const expectedObservations = countNumberedNotes(notes)
+    console.log(`AI returned ${rawObservations.length} observations for ${batch.length} images in batch ${batchIndex}`)
+
+    if (expectedObservations > 0) {
+      console.log(`Expected ${expectedObservations} observations based on numbered notes`)
+      if (rawObservations.length > expectedObservations) {
+        console.warn(`Warning: AI created ${rawObservations.length} observations but notes only contain ${expectedObservations} numbered items. Taking first ${expectedObservations} observations.`)
+        // Truncate to match expected count
+        rawObservations = rawObservations.slice(0, expectedObservations)
+      }
+    } else if (rawObservations.length !== batch.length) {
       console.warn(`AI returned ${rawObservations.length} observations for ${batch.length} images`)
-      // Don't throw error, try to process what we have
     }
     
     // Validate and repair each observation
@@ -161,6 +180,8 @@ function buildAIPrompt(project: Project, notes?: string, allProjects?: Project[]
   
   return `Role: construction safety inspector producing Compass/Enablon rows
 
+MANDATORY FIRST STEP: If inspector notes contain numbered items (1, 2, 3, etc.), count them. Your output must contain EXACTLY that many observations - never more.
+
 CRITICAL ANALYSIS INSTRUCTIONS:
 - Create professional, contractor-ready observations suitable for direct sending to subcontractors/GCs
 - Use the inspector's notes to group related photos into single observations where appropriate
@@ -189,12 +210,16 @@ ${notes ? `
 CONTEXT NOTES FROM SAFETY INSPECTOR:
 ${notes}
 
+CRITICAL GROUPING REQUIREMENT: Count the numbered items in the notes below. Create EXACTLY that many observations.
+Example: Notes contain items 1-13 → Output exactly 13 observations (never 15, never more than the note count)
+
 CRITICAL: Use these inspector notes as the PRIMARY SOURCE for observations. Match each numbered note to photos:
-- If multiple photos relate to one numbered note, create ONE observation
+- ONE numbered note = ONE observation (even if multiple photos show the same issue)
+- If multiple photos relate to one numbered note, create ONE observation covering all photos
 - Use the exact location details from notes (e.g., "COLO3 CELL1", "Externals South")
 - Include contractor names when mentioned (e.g., "Jones Engineering", "Salboheds")
 - Use the inspector's description as the basis, don't rewrite their findings
-- Professional tone suitable for direct contractor communication${allProjects && allProjects.length > 1 ? ' Pay special attention to project-specific mentions and assign observations to the correct project.' : ''}` : ''}
+- Professional tone suitable for direct contractor communication${allProjects && allProjects.length > 1 ? ' Pay special attention project-specific mentions and assign observations to the correct project.' : ''}` : ''}
 
 Use only these enumerations:
 
@@ -262,11 +287,21 @@ PROFESSIONAL WRITING REQUIREMENTS:
 - Include specific locations from inspector notes: exact COLO areas, room numbers, contractor names
 - Keep descriptions concise but complete - ready for immediate contractor action
 
-PHOTO-CONTEXT MATCHING:
-- Match inspector's numbered notes (1-13) with corresponding photos (1-15)
-- If multiple photos relate to one numbered note, create ONE observation
-- Use exact wording from inspector notes for locations and contractor names
-- Group related photos: if notes mention one issue but you have 2 photos, combine into single observation
+PHOTO-CONTEXT MATCHING ALGORITHM:
+CRITICAL: The number of observations MUST match the number of numbered notes from the inspector.
+
+STEP 1: Count the numbered notes (e.g., if notes contain items 1-13, create exactly 13 observations)
+STEP 2: For each numbered note, identify ALL photos that relate to that specific issue
+STEP 3: Create ONE observation per numbered note, even if multiple photos show the same issue
+STEP 4: If there are more photos than notes, the extra photos likely show additional angles of existing issues
+
+GROUPING RULES:
+- Inspector note "1. PPE violation in COLO3" + 2 photos of same worker = 1 observation
+- Inspector note "2. Scaffolding issue" + 1 photo = 1 observation
+- Inspector note "3. Housekeeping concern" + 3 photos of same area = 1 observation
+- Result: 3 numbered notes = exactly 3 observations (not 6)
+
+MANDATORY: If inspector provides 13 numbered notes, output exactly 13 observations. Never create more observations than numbered notes.
 
 Return exactly 15 fields per object matching these headers:
 Project, Room/Area, Comments, Observation Category, Observation Description, Responsible Party, Interim Corrective Actions, Final Corrective Actions, Category Type, Phase of Construction, Notification Date, High Risk + Significant Exposure, General Category, Worst Potential Severity, Person Notified
