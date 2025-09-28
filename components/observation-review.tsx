@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import type { Observation } from '@/lib/types'
+import type { ObservationDraft } from '@/lib/types'
 import { 
   ROOM_AREAS, 
   OBSERVATION_CATEGORIES, 
@@ -13,9 +13,9 @@ import {
 } from '@/lib/constants/enums'
 
 interface ObservationReviewProps {
-  observations: Observation[]
+  observations: ObservationDraft[]
   project: string
-  onSave: (updatedObservations: Observation[]) => void
+  onSave: (updatedObservations: ObservationDraft[]) => void
   onCancel: () => void
 }
 
@@ -25,10 +25,10 @@ export default function ObservationReview({
   onSave, 
   onCancel 
 }: ObservationReviewProps) {
-  const [editedObservations, setEditedObservations] = useState<Observation[]>(observations)
+  const [editedObservations, setEditedObservations] = useState<ObservationDraft[]>(observations)
   const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set())
 
-  const updateObservation = (index: number, field: keyof Observation, value: string) => {
+  const updateObservation = (index: number, field: keyof ObservationDraft, value: string) => {
     const updated = [...editedObservations]
     updated[index] = { ...updated[index], [field]: value }
     

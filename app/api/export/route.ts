@@ -1,9 +1,10 @@
 import { NextRequest } from 'next/server'
 import { PROJECTS } from '@/lib/constants/enums'
 import type { Project } from '@/lib/constants/enums'
-import type { Observation } from '@/lib/types'
+import type { Observation, ObservationDraft, ProcessedImage } from '@/lib/types'
 import { createZipStream, streamZipToBuffer } from '@/lib/zip/buildZip'
 import type { FailedItem } from '@/lib/types'
+import { getSessionData, clearSessionData } from '@/lib/session/store'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60 // 1 minute for export
@@ -14,9 +15,22 @@ export async function POST(request: NextRequest) {
     
     // Parse JSON body (reviewed observations and images)
     const body = await request.json()
-    const { observations, project, failed = [], images = [] } = body
+    const { observations, project, sessionId } = body as {
+      observations: ObservationDraft[]
+      project: string
+      sessionId?: string
+    }
     
-    console.log(`Export request: project=${project}, observations=${observations?.length || 0}`)
+    console.log(`Export request: project=${project}, observations=${observations?.length || 0}, session=${sessionId || 'none'}`)
+
+    if (!sessionId || typeof sessionId !== 'string') {
+      return new Response('Missing sessionId', { status: 400 })
+    }
+
+    const sessionData = getSessionData(sessionId)
+    if (!sessionData) {
+      return new Response('Session data expired or missing. Please rerun the analysis.', { status: 410 })
+    }
     
     // Validate inputs - allow "mixed" for multi-project exports
     if (!project || (!PROJECTS.includes(project as Project) && project !== 'mixed')) {
@@ -40,31 +54,64 @@ export async function POST(request: NextRequest) {
     // For multi-project, use the first project from observations for ZIP structure
     // The actual project codes will be used per observation in the CSV and filename generation
     const projectForZip = project === 'mixed' 
-      ? (observations[0]?.Project as Project) || 'GVX04'
+      ? ((observations?.[0]?.Project as Project) || sessionData.project)
       : (project as Project)
     
-    // Reconstruct Buffer objects from JSON-serialized data
-    const processedImages = images.map((img: any, index: number) => {
-      const reconstructedBuffer = img.buffer?.type === 'Buffer' ? Buffer.from(img.buffer.data) : img.buffer
-      console.log(`Image ${index + 1}: buffer type=${typeof reconstructedBuffer}, isBuffer=${Buffer.isBuffer(reconstructedBuffer)}, size=${reconstructedBuffer?.length || 0}`)
-      return {
-        ...img,
-        buffer: reconstructedBuffer
+    const imagesByToken = sessionData.images
+    const orderedTokens = sessionData.order.filter(token => imagesByToken[token])
+    const usedFallback = new Set<string>()
+
+    const sanitizedObservations: Observation[] = []
+    const exportImages: ProcessedImage[] = []
+
+    for (const draft of observations as ObservationDraft[]) {
+      const { __photoToken, ...rest } = draft
+      const token = typeof __photoToken === 'string' ? __photoToken : undefined
+
+      let image: ProcessedImage | undefined
+      if (token && imagesByToken[token]) {
+        image = imagesByToken[token]
+      } else {
+        const fallbackToken = orderedTokens.find(t => !usedFallback.has(t))
+        if (fallbackToken) {
+          image = imagesByToken[fallbackToken]
+          usedFallback.add(fallbackToken)
+        }
       }
-    })
-    
+
+      if (!image && orderedTokens.length > 0) {
+        image = imagesByToken[orderedTokens[0]]
+      }
+
+      if (image) {
+        exportImages.push(image)
+      }
+
+      sanitizedObservations.push(rest as Observation)
+    }
+
+    if (exportImages.length === 0) {
+      return new Response('No processed images available for export. Please rerun the analysis.', { status: 410 })
+    }
+
+    while (exportImages.length < sanitizedObservations.length) {
+      exportImages.push(exportImages[0])
+    }
+
     // Create ZIP with reviewed observations and images
     const { archive } = createZipStream({
-      observations: observations as Observation[],
-      images: processedImages, // Include reconstructed images
+      observations: sanitizedObservations,
+      images: exportImages,
       project: projectForZip,
-      failed: failed as FailedItem[]
+      failed: sessionData.failed as FailedItem[]
     })
     
     // Convert archive to buffer
     const zipBuffer = await streamZipToBuffer(archive)
-    
+
     console.log(`ZIP created: ${zipBuffer.length} bytes`)
+
+    clearSessionData(sessionId)
     
     // Return ZIP file
     return new Response(zipBuffer as BodyInit, {

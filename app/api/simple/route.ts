@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { randomUUID } from 'crypto'
 import {
   PROJECTS,
   ROOM_AREAS,
@@ -14,7 +15,10 @@ import {
 import type { Project } from '@/lib/constants/enums'
 import { normalizeImages } from '@/lib/files/normalize'
 import { createZipStream, streamZipToBuffer } from '@/lib/zip/buildZip'
-import type { Observation, FailedItem } from '@/lib/types'
+import type { Observation, ObservationDraft, FailedItem, ProcessedImage } from '@/lib/types'
+import { sendProgressUpdate, closeProgressConnection } from '@/lib/progress/manager'
+import type { ProgressEvent } from '@/lib/progress/manager'
+import { setSessionData } from '@/lib/session/store'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -66,6 +70,33 @@ function normalizeSentence(value: string): string {
 
   const capitalized = trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
   return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`
+}
+
+function reportProgress(
+  sessionId: string | undefined,
+  progress: number,
+  label: string,
+  step: string,
+  details?: ProgressEvent['details']
+) {
+  if (!sessionId) return
+  sendProgressUpdate(sessionId, {
+    id: sessionId,
+    progress,
+    label,
+    step,
+    details
+  })
+}
+
+function scheduleProgressClose(sessionId: string | undefined) {
+  if (!sessionId) return
+  const timeout = setTimeout(() => {
+    closeProgressConnection(sessionId)
+  }, 4000)
+  if (typeof (timeout as any)?.unref === 'function') {
+    ;(timeout as any).unref()
+  }
 }
 
 function normalizeObservation(
@@ -317,6 +348,8 @@ Return only the JSON array.`
 }
 
 export async function POST(request: NextRequest) {
+  let sessionId: string | undefined
+
   try {
     console.log('=== Simple API Started ===')
 
@@ -326,6 +359,10 @@ export async function POST(request: NextRequest) {
     const project = (fdAny.get('project') as string) || ''
     const notes = (fdAny.get('notes') as string) || ''
     const mode = request.headers.get('X-Mode') || 'zip'
+    const potentialSessionId = fdAny.get('sessionId')
+    if (typeof potentialSessionId === 'string') {
+      sessionId = potentialSessionId
+    }
 
     const notificationDate = new Intl.DateTimeFormat('en-GB', {
       timeZone: CONSTANTS.TIMEZONE
@@ -335,7 +372,11 @@ export async function POST(request: NextRequest) {
       return file && file.name && file.size !== undefined && file.stream
     })
 
-    console.log(`Project: ${project}, Notes: ${notes.length} chars, Files: ${fileEntries.length}, Mode: ${mode}`)
+    console.log(`Project: ${project}, Notes: ${notes.length} chars, Files: ${fileEntries.length}, Mode: ${mode}, Session: ${sessionId || 'none'}`)
+
+    reportProgress(sessionId, 5, 'Validating upload...', 'validation', {
+      total: fileEntries.length
+    })
 
     // Validate
     if (!project || !PROJECTS.includes(project as Project)) {
@@ -348,6 +389,9 @@ export async function POST(request: NextRequest) {
 
     // Step 1: Normalize images
     console.log('Normalizing images...')
+    reportProgress(sessionId, 12, 'Normalizing images...', 'images', {
+      total: fileEntries.length
+    })
     const { images, failed } = await normalizeImages(fileEntries)
 
     if (images.length === 0) {
@@ -356,8 +400,16 @@ export async function POST(request: NextRequest) {
 
     console.log(`Normalized ${images.length} images`)
 
+    reportProgress(sessionId, 35, 'Images ready for analysis', 'images', {
+      processed: images.length,
+      total: fileEntries.length
+    })
+
     // Step 2: Simple AI call - no batching, no complex logic
     console.log('Calling AI...')
+    reportProgress(sessionId, 50, 'Analyzing images with Gemini...', 'analysis', {
+      total: images.length
+    })
     const rawObservations: any[] = await callSimpleAI(
       images,
       project as Project,
@@ -366,6 +418,11 @@ export async function POST(request: NextRequest) {
     )
 
     console.log(`Got ${rawObservations.length} observations from AI`)
+
+    reportProgress(sessionId, 75, 'Applying project rules...', 'analysis', {
+      processed: rawObservations.length,
+      total: images.length
+    })
 
     const observations = rawObservations.map(obs =>
       normalizeObservation(obs, project as Project, notificationDate)
@@ -391,12 +448,57 @@ export async function POST(request: NextRequest) {
         }
         return images[idx]
       })
+
+      const observationTokens = selectedImages.map(() =>
+        sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
+      )
+
+      const observationsWithMeta: ObservationDraft[] = observations.map((obs, idx) => ({
+        ...obs,
+        __photoToken: observationTokens[idx]
+      }))
+
+      if (sessionId) {
+        const imageRecord: Record<string, ProcessedImage> = {}
+        observationTokens.forEach((token, idx) => {
+          const image = selectedImages[idx]
+          if (image) {
+            imageRecord[token] = image
+          }
+        })
+
+        setSessionData(sessionId, {
+          project: project as Project,
+          failed,
+          images: imageRecord,
+          order: observationTokens
+        })
+      }
+
+      reportProgress(sessionId, 93, 'Preparing review data...', 'export', {
+        processed: observations.length,
+        total: images.length
+      })
+      reportProgress(sessionId, 100, 'Analysis complete', 'completed', {
+        processed: observations.length,
+        total: images.length
+      })
+      scheduleProgressClose(sessionId)
+
+      const imageSummaries = selectedImages.map((img, idx) => ({
+        originalIndex: img.originalIndex,
+        originalName: img.originalName,
+        mimeType: img.mimeType,
+        __photoToken: observationTokens[idx]
+      }))
+
       // Return JSON for review
       return new Response(JSON.stringify({
-        observations,
-        images: selectedImages,
+        observations: observationsWithMeta,
+        images: imageSummaries,
         failed,
         project,
+        sessionId,
         totalImages: images.length,
         processedImages: observations.length
       }), {
@@ -406,6 +508,10 @@ export async function POST(request: NextRequest) {
     } else {
       // Return ZIP
       console.log('Creating ZIP...')
+      reportProgress(sessionId, 90, 'Preparing ZIP export...', 'export', {
+        processed: observations.length,
+        total: images.length
+      })
       const { archive } = createZipStream({
         observations,
         images: images.slice(0, observations.length),
@@ -414,6 +520,12 @@ export async function POST(request: NextRequest) {
       })
 
       const zipBuffer = await streamZipToBuffer(archive)
+
+      reportProgress(sessionId, 100, 'Export ready', 'completed', {
+        processed: observations.length,
+        total: images.length
+      })
+      scheduleProgressClose(sessionId)
 
       return new Response(zipBuffer as BodyInit, {
         status: 200,
@@ -430,6 +542,9 @@ export async function POST(request: NextRequest) {
 
     const status = typeof (error as any)?.status === 'number' ? (error as any).status : 500
     const message = error instanceof Error ? error.message : 'Unknown error'
+
+    reportProgress(sessionId, 100, `Processing failed: ${message}`, 'error')
+    scheduleProgressClose(sessionId)
 
     return new Response(
       JSON.stringify({

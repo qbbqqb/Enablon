@@ -10,7 +10,7 @@ import { compressFileBatch } from '@/lib/client/compress'
 import type { CompressedFile } from '@/lib/client/compress'
 import type { Project } from '@/lib/constants/enums'
 import { PROJECTS } from '@/lib/constants/enums'
-import type { Observation } from '@/lib/types'
+import type { ObservationDraft } from '@/lib/types'
 
 export default function Home() {
   const [files, setFiles] = useState<File[]>([])
@@ -28,8 +28,9 @@ export default function Home() {
   }>({})
   const [eventSource, setEventSource] = useState<EventSource | null>(null)
   const [showReview, setShowReview] = useState(false)
-  const [observations, setObservations] = useState<Observation[]>([])
+  const [observations, setObservations] = useState<ObservationDraft[]>([])
   const [processedImages, setProcessedImages] = useState<any[]>([])
+  const [sessionId, setSessionId] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
 
   // Cleanup EventSource on component unmount
@@ -61,6 +62,7 @@ export default function Home() {
     
     // Generate unique session ID
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    setSessionId(sessionId)
     
     setIsProcessing(true)
     setProgress(0)
@@ -97,13 +99,12 @@ export default function Home() {
 
       // Use simple endpoint for all requests - no complex batching logic
       console.log(`Processing ${files.length} files with simple approach`)
-
-      setProgressLabel('Uploading all files...')
-      setProgress(10)
+      setProgressLabel('Uploading files to server...')
 
       const formData = new FormData()
       formData.append('project', projectToUse)
       formData.append('notes', notes)
+      formData.append('sessionId', sessionId)
       files.forEach(file => formData.append('files', file))
 
       const response = await fetch('/api/simple', {
@@ -140,6 +141,10 @@ export default function Home() {
 
       const result = await response.json()
       console.log(`Simple request completed: ${result.observations?.length || 0} observations`)
+
+      if (typeof result.sessionId === 'string' && result.sessionId.trim().length > 0) {
+        setSessionId(result.sessionId)
+      }
 
       setObservations(result.observations || [])
       setProcessedImages(result.images || [])
@@ -261,6 +266,7 @@ export default function Home() {
       setProgress(0)
       setProgressLabel('')
       setProgressDetails({})
+      setSessionId(null)
       
       // Close SSE connection on error
       if (eventSource) {
@@ -270,19 +276,23 @@ export default function Home() {
     }
   }
 
-  const handleExportObservations = async (reviewedObservations: Observation[]) => {
+  const handleExportObservations = async (reviewedObservations: ObservationDraft[]) => {
     setIsExporting(true)
 
     try {
       // Use "mixed" as project name when multiple projects are detected
       const projectForFilename = allDetectedProjects.length > 1 ? 'mixed' : (detectedProject || 'unknown')
 
+      if (!sessionId) {
+        throw new Error('Session expired. Please run the analysis again before exporting.')
+      }
+
       console.log('Export request:', {
         observations: reviewedObservations.length,
         project: projectForFilename,
-        images: processedImages.length,
         detectedProject,
-        allDetectedProjects
+        allDetectedProjects,
+        sessionId
       })
 
       const response = await fetch('/api/export', {
@@ -293,8 +303,7 @@ export default function Home() {
         body: JSON.stringify({
           observations: reviewedObservations,
           project: projectForFilename,
-          images: processedImages,
-          failed: []
+          sessionId
         })
       })
       
@@ -323,6 +332,7 @@ export default function Home() {
       setShowReview(false)
       setDetectedProject(null)
       setAllDetectedProjects([])
+      setSessionId(null)
       
     } catch (error) {
       console.error('Export failed:', error)
@@ -339,6 +349,7 @@ export default function Home() {
     setProgress(0)
     setProgressLabel('')
     setProgressDetails({})
+    setSessionId(null)
   }
 
 

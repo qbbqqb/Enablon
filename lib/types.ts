@@ -27,6 +27,10 @@ export interface Observation {
   'Person Notified': string
 }
 
+export type ObservationDraft = Observation & {
+  __photoToken?: string
+}
+
 export interface ProcessedImage {
   originalIndex: number
   originalName: string
