@@ -133,16 +133,16 @@ export type SeverityLevel = typeof SEVERITY_LEVELS[number]
 // Project-specific mappings
 export const PROJECT_MAPPINGS = {
   GVX04: {
-    responsibleParty: 'Dean Bradbury - dbradbury B2B',
-    personNotified: 'Vitor Ferreira - vferreira B2B'
+    responsibleParty: 'dbradbury B2B',
+    personNotified: 'vferreira B2B'
   },
   GVX03: {
-    responsibleParty: 'Nigel MacAodha - nmacaodha',
-    personNotified: 'Dragos Viorel-Silion - dviorelsilion B2B'
+    responsibleParty: 'nmacaodha',
+    personNotified: 'dviorelsilion B2B'
   },
   GVX05: {
-    responsibleParty: 'Nigel MacAodha - nmacaodha',
-    personNotified: 'Liina Laanemae - llaanemae B2B'
+    responsibleParty: 'nmacaodha',
+    personNotified: 'llaanemae B2B'
   }
 } as const
 

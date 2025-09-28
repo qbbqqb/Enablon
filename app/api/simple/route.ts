@@ -1,46 +1,207 @@
 import { NextRequest } from 'next/server'
-import { PROJECTS } from '@/lib/constants/enums'
+import {
+  PROJECTS,
+  ROOM_AREAS,
+  OBSERVATION_CATEGORIES,
+  CATEGORY_TYPES,
+  HRA_CATEGORIES,
+  GENERAL_CATEGORIES,
+  CONSTRUCTION_PHASES,
+  SEVERITY_LEVELS,
+  PROJECT_MAPPINGS,
+  CONSTANTS
+} from '@/lib/constants/enums'
 import type { Project } from '@/lib/constants/enums'
 import { normalizeImages } from '@/lib/files/normalize'
-import { buildCSV } from '@/lib/csv/buildCsv'
 import { createZipStream, streamZipToBuffer } from '@/lib/zip/buildZip'
 import type { Observation, FailedItem } from '@/lib/types'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
 
-async function callSimpleAI(images: any[], project: Project, notes?: string): Promise<Observation[]> {
+function toCleanString(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : fallback
+  }
+
+  if (value === null || value === undefined) {
+    return fallback
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    const str = String(value).trim()
+    return str.length > 0 ? str : fallback
+  }
+
+  if (Array.isArray(value) && value.length > 0) {
+    return toCleanString(value[0], fallback)
+  }
+
+  return fallback
+}
+
+function pickFromList<T extends readonly string[], F extends string>(
+  value: unknown,
+  options: T,
+  fallback: F
+): T[number] | F {
+  const target = toCleanString(value).toLowerCase()
+  if (!target) return fallback
+
+  const exact = options.find(option => option.toLowerCase() === target)
+  if (exact) return exact
+
+  const compactTarget = target.replace(/\s+/g, ' ')
+  const compactMatch = options.find(option => option.toLowerCase() === compactTarget)
+  if (compactMatch) return compactMatch
+
+  const partial = options.find(option => option.toLowerCase().includes(target))
+  return partial ?? fallback
+}
+
+function normalizeSentence(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+
+  const capitalized = trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
+  return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`
+}
+
+function normalizeObservation(
+  raw: any,
+  project: Project,
+  notificationDate: string
+): Observation {
+  const mapping = PROJECT_MAPPINGS[project] ?? { responsibleParty: 'GC', personNotified: '' }
+
+  let categoryType = pickFromList(raw?.['Category Type'], CATEGORY_TYPES, 'General Category')
+
+  const observationCategory = pickFromList(
+    raw?.['Observation Category'],
+    OBSERVATION_CATEGORIES,
+    'New At Risk Observation'
+  )
+
+  const roomArea = pickFromList(raw?.['Room/Area'], ROOM_AREAS, 'Other')
+  const phase = pickFromList(raw?.['Phase of Construction'], CONSTRUCTION_PHASES, 'Integration')
+  const severity = pickFromList(raw?.['Worst Potential Severity'], SEVERITY_LEVELS, 'Minor (7 Days)')
+
+  let highRisk: typeof HRA_CATEGORIES[number] | '' = ''
+  let generalCategory: typeof GENERAL_CATEGORIES[number] | '' = ''
+
+  if (categoryType === 'HRA + Significant Exposure') {
+    const selected = pickFromList(raw?.['High Risk + Significant Exposure'], HRA_CATEGORIES, '')
+    if (selected && HRA_CATEGORIES.includes(selected as typeof HRA_CATEGORIES[number])) {
+      highRisk = selected as typeof HRA_CATEGORIES[number]
+    } else {
+      categoryType = 'General Category'
+      const generalCandidate = pickFromList(raw?.['General Category'], GENERAL_CATEGORIES, 'Other')
+      generalCategory = GENERAL_CATEGORIES.includes(generalCandidate as typeof GENERAL_CATEGORIES[number])
+        ? (generalCandidate as typeof GENERAL_CATEGORIES[number])
+        : 'Other'
+    }
+  }
+
+  if (categoryType === 'General Category') {
+    const generalCandidate = pickFromList(raw?.['General Category'], GENERAL_CATEGORIES, 'Other')
+    generalCategory = GENERAL_CATEGORIES.includes(generalCandidate as typeof GENERAL_CATEGORIES[number])
+      ? (generalCandidate as typeof GENERAL_CATEGORIES[number])
+      : 'Other'
+    highRisk = ''
+  }
+
+  let interim = toCleanString(raw?.['Interim Corrective Actions'], 'N/A')
+  if (interim.toUpperCase() === 'N/A') {
+    interim = 'N/A'
+  }
+  const isPositive = observationCategory === 'New Positive Observation'
+
+  const rawFinalSource = toCleanString(raw?.['Final Corrective Actions'])
+  const sanitizedSource = rawFinalSource.toUpperCase() === 'N/A' ? '' : rawFinalSource
+  const rawFinal = sanitizedSource
+    .replace(/^OPEN\s*-\s*GC to action\.?\s*/i, '')
+    .replace(/^(OPEN|CLOSED)\s*[-:]\s*/i, '')
+    .trim()
+
+  const formattedFinal = normalizeSentence(rawFinal)
+  const finalActions = (isPositive
+    ? `CLOSED - ${formattedFinal || 'Observation closed.'}`
+    : `OPEN - GC to action.${formattedFinal ? ` ${formattedFinal}` : ''}`
+  ).trim()
+
+  let description = toCleanString(raw?.['Observation Description'], 'Observation requires review')
+  if (description.toUpperCase() === 'N/A') {
+    description = 'Observation requires review'
+  }
+
+  const observation: Observation = {
+    Project: project,
+    'Room/Area': roomArea,
+    Comments: CONSTANTS.COMMENTS,
+    'Observation Category': observationCategory,
+    'Observation Description': description,
+    'Responsible Party': mapping.responsibleParty || 'GC',
+    'Interim Corrective Actions': interim,
+    'Final Corrective Actions': finalActions,
+    'Category Type': categoryType,
+    'Phase of Construction': phase,
+    'Notification Date': notificationDate,
+    'High Risk + Significant Exposure': categoryType === 'HRA + Significant Exposure' ? highRisk : '',
+    'General Category': categoryType === 'General Category' ? generalCategory : '',
+    'Worst Potential Severity': severity,
+    'Person Notified': mapping.personNotified || ''
+  }
+
+  return observation
+}
+
+async function callSimpleAI(
+  images: any[],
+  project: Project,
+  notificationDate: string,
+  notes?: string
+): Promise<Observation[]> {
   console.log(`Calling AI with ${images.length} images and ${notes?.length || 0} chars of notes`)
 
   const prompt = `You are a construction safety inspector creating Enablon/Compass observations.
 
-${notes ? `INSPECTOR NOTES:
-${notes}
+INPUT CONTEXT:
+- Project: ${project}
+- Expected notification date (Europe/Stockholm): ${notificationDate}
+- Images: ${images.length} photos supplied in the same order they must be referenced.
+${notes ? `- Inspector notes (verbatim):
+${notes}` : '- No inspector notes were provided.'}
 
-INSTRUCTIONS: Create observations based on these notes and the photos. If the notes are numbered (1., 2., 3., etc.), create exactly that many observations.` : 'INSTRUCTIONS: Analyze the photos and create safety observations for what you see.'}
+OUTPUT REQUIREMENTS:
+Return EXACTLY ${images.length} JSON objects inside a single array (no markdown, no commentary). Each object MUST use these exact keys and values from the allowed options:
+- "Project": always "${project}".
+- "Room/Area": choose the closest match from: ${ROOM_AREAS.join(', ')}.
+- "Comments": use "${CONSTANTS.COMMENTS}".
+- "Observation Category": choose from ${OBSERVATION_CATEGORIES.join(' | ')}.
+- "Observation Description": concise, actionable summary of the condition.
+- "Responsible Party": name the specific contractor if obvious, otherwise "GC".
+- "Interim Corrective Actions": what was done immediately (or "N/A").
+- "Final Corrective Actions": plain sentence describing follow-up or close-out. Do not add OPEN/CLOSED prefixes; the system handles that.
+- "Category Type": choose from ${CATEGORY_TYPES.join(' | ')}.
+- "Phase of Construction": choose from ${CONSTRUCTION_PHASES.join(', ')}.
+- "Notification Date": exactly "${notificationDate}".
+- "High Risk + Significant Exposure": pick from ${HRA_CATEGORIES.join(', ')} or "" if not applicable.
+- "General Category": pick from ${GENERAL_CATEGORIES.join(', ')} or "" if not applicable.
+- "Worst Potential Severity": choose from ${SEVERITY_LEVELS.join(' | ')}.
+- "Person Notified": leave blank unless a person is explicitly named.
 
-OUTPUT: Return ONLY a JSON array of observations. Each observation must have these exact fields:
-- "Project": "${project}"
-- "Room/Area": (e.g., "COLO or AZ", "External Area", "Loading Bay or Dock")
-- "Comments": (brief context)
-- "Observation Category": ("New At Risk Observation" or "New Positive Observation")
-- "Observation Description": (clear, actionable description)
-- "Responsible Party": (contractor name or "GC" or "")
-- "Interim Corrective Actions": ("N/A" usually)
-- "Final Corrective Actions": (action required, or "CLOSED:" for positive)
-- "Category Type": ("General Category" or "HRA + Significant Exposure")
-- "Phase of Construction": (relevant phase)
-- "Notification Date": "17/09/2025"
-- "High Risk + Significant Exposure": ("Electrical", "Working from Heights", "Lifting Operations", etc. or "")
-- "General Category": ("Housekeeping", "Barricades", "Safety Culture", etc. or "")
-- "Worst Potential Severity": ("Minor (7 Days)", "Potentially Serious/Serious (Immediate)", "Positive Observation")
-- "Person Notified": ""
+EXCLUSIVITY RULES:
+- If "Category Type" is "HRA + Significant Exposure", set "High Risk + Significant Exposure" and leave "General Category" empty.
+- If "Category Type" is "General Category", set "General Category" and leave "High Risk + Significant Exposure" empty.
 
-Additionally include for internal pairing (these are optional and will NOT be in CSV):
-- "photo_index": (1-based index of the single most relevant photo from the provided image list)
-- "photo_indices": (array of 1-based indices if multiple photos relate to the observation)
+PHOTO PAIRING HELPERS (optional fields kept in JSON but not exported):
+- "photo_index": 1-based index of the best matching photo.
+- "photo_indices": array of 1-based indices if multiple photos apply.
 
-Return ONLY the JSON array, no markdown, no explanation.`
+Follow the inspector notes strictly. If the notes are numbered (1., 2., 3., etc.), produce the same number of observations and align each description with the corresponding numbered item. When the notes do not cite an issue, rely on the photo evidence.
+
+Return only the JSON array.`
 
   const imageDataUrls = images.map(img =>
     `data:${img.mimeType};base64,${img.buffer.toString('base64')}`
@@ -55,9 +216,8 @@ Return ONLY the JSON array, no markdown, no explanation.`
       'X-Title': process.env.OPENROUTER_APP_NAME || 'Enablon Observation Bundler'
     },
     body: JSON.stringify({
-      // Use a generally available multimodal model. The previous
-      // `gemini-2.0-flash-exp:free` route can return 404 (model not found).
-      model: 'google/gemini-2.5-flash',
+      // Project requirement: Gemini 2.5 Pro Vision on OpenRouter
+      model: 'google/gemini-2.5-pro',
       messages: [
         {
           role: 'user',
@@ -75,21 +235,82 @@ Return ONLY the JSON array, no markdown, no explanation.`
 
   if (!response.ok) {
     const text = await response.text().catch(() => '')
-    throw new Error(`OpenRouter API error: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`)
+
+    let errorMessage = `${response.status} ${response.statusText}`
+    if (text) {
+      try {
+        const parsed = JSON.parse(text)
+        errorMessage = parsed?.error?.message || parsed?.message || parsed?.detail || text
+      } catch (parseError) {
+        errorMessage = text
+      }
+    }
+
+    const error: Error & { status?: number; details?: string } = new Error(`OpenRouter API error: ${errorMessage}`)
+    error.status = response.status
+    if (text) {
+      error.details = text
+    }
+
+    throw error
   }
 
   const data = await response.json()
-  const content = data.choices[0]?.message?.content || ''
+  const rawContent = data.choices?.[0]?.message?.content
+
+  const contentText = (() => {
+    if (typeof rawContent === 'string') {
+      return rawContent
+    }
+
+    if (Array.isArray(rawContent)) {
+      return rawContent
+        .map((part: unknown) => {
+          if (!part) return ''
+          if (typeof part === 'string') return part
+          if (typeof (part as any).text === 'string') return (part as any).text
+          if (typeof (part as any).content === 'string') return (part as any).content
+          return ''
+        })
+        .filter(Boolean)
+        .join('\n')
+    }
+
+    if (rawContent && typeof rawContent === 'object' && typeof (rawContent as any).text === 'string') {
+      return (rawContent as any).text
+    }
+
+    if (typeof data.choices?.[0]?.message?.text === 'string') {
+      return data.choices[0].message.text
+    }
+
+    return ''
+  })()
+
+  if (!contentText) {
+    throw new Error('OpenRouter API error: empty response content')
+  }
 
   // Clean markdown formatting
-  let cleanContent = content.trim()
+  let cleanContent = contentText.trim()
   if (cleanContent.startsWith('```json')) {
     cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '')
   } else if (cleanContent.startsWith('```')) {
     cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '')
   }
 
-  const observations = JSON.parse(cleanContent)
+  let observations
+  try {
+    observations = JSON.parse(cleanContent)
+  } catch (error) {
+    console.error('Failed to parse AI response:', cleanContent)
+    throw new Error(`Failed to parse AI response as JSON: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  }
+
+  if (!Array.isArray(observations)) {
+    throw new Error('AI response is not an array of observations')
+  }
+
   console.log(`AI returned ${observations.length} observations`)
 
   return observations
@@ -105,6 +326,10 @@ export async function POST(request: NextRequest) {
     const project = (fdAny.get('project') as string) || ''
     const notes = (fdAny.get('notes') as string) || ''
     const mode = request.headers.get('X-Mode') || 'zip'
+
+    const notificationDate = new Intl.DateTimeFormat('en-GB', {
+      timeZone: CONSTANTS.TIMEZONE
+    }).format(new Date())
 
     const fileEntries = Array.from(fdAny.getAll('files')).filter((file: any) => {
       return file && file.name && file.size !== undefined && file.stream
@@ -133,15 +358,24 @@ export async function POST(request: NextRequest) {
 
     // Step 2: Simple AI call - no batching, no complex logic
     console.log('Calling AI...')
-    const observations: any[] = await callSimpleAI(images, project as Project, notes || undefined)
+    const rawObservations: any[] = await callSimpleAI(
+      images,
+      project as Project,
+      notificationDate,
+      notes || undefined
+    )
 
-    console.log(`Got ${observations.length} observations from AI`)
+    console.log(`Got ${rawObservations.length} observations from AI`)
+
+    const observations = rawObservations.map(obs =>
+      normalizeObservation(obs, project as Project, notificationDate)
+    )
 
     if (mode === 'review') {
       // Attempt to map each observation to the best matching photo based on
       // optional fields the model may include: photo_index (1-based) or
       // photo_indices (array). Fall back to same-index pairing.
-      const selectedImages = observations.map((obs: any, i: number) => {
+      const selectedImages = rawObservations.map((obs: any, i: number) => {
         let idx: number | undefined
         if (typeof obs?.photo_index === 'number') idx = obs.photo_index - 1
         if (!idx && Array.isArray(obs?.photo_indices) && obs.photo_indices.length > 0) {
@@ -193,13 +427,18 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Simple API Error:', error)
+
+    const status = typeof (error as any)?.status === 'number' ? (error as any).status : 500
+    const message = error instanceof Error ? error.message : 'Unknown error'
+
     return new Response(
       JSON.stringify({
         error: 'Processing failed',
-        message: error instanceof Error ? error.message : 'Unknown error'
+        message,
+        status
       }),
       {
-        status: 500,
+        status,
         headers: { 'Content-Type': 'application/json' }
       }
     )

@@ -10,8 +10,8 @@ export function generatePhotoFilename(
   // Zero-padded observation number for CSV cross-reference
   const obsNoStr = obsNo.toString().padStart(3, '0')
 
-  // Short description from the observation (key safety issue)
-  const description = generateShortSlug(observation['Observation Description'], 25)
+  // Contextual slug derived from room area, category, and description
+  const description = generateContextSlug(observation, 45)
 
   // Date (YYYYMMDD)
   const dateParts = observation['Notification Date'].split('/')
@@ -24,50 +24,58 @@ export function generatePhotoFilename(
   return `${project}-${obsNoStr}-${description}-${dateStr}${photoNum}.jpg`
 }
 
-function getSeverityCode(severity: string): string {
-  switch (severity) {
-    case 'Major (1 Day)': return 'MAJOR'
-    case 'Potentially Serious/Serious (Immediate)': return 'SERIOUS'
-    case 'Positive Observation': return 'POSITIVE'
-    case 'Minor (7 Days)': return 'MINOR'
-    default: return 'UNK'
-  }
-}
-
-function getObsCategoryCode(category: string): string {
-  switch (category) {
-    case 'New At Risk Observation': return 'ATRISK'
-    case 'New Near Miss': return 'NEARMISS'
-    case 'New Positive Observation': return 'POSITIVE'
-    default: return 'UNK'
-  }
-}
-
-function sanitizeForFilename(str: string): string {
-  return str
-    .replace(/[^a-zA-Z0-9\s-]/g, '') // Remove special characters except spaces and hyphens
-    .replace(/\s+/g, '-') // Replace spaces with hyphens
-    .replace(/-+/g, '-') // Collapse multiple hyphens
-    .replace(/^-|-$/g, '') // Remove leading/trailing hyphens
-}
-
-function generateShortSlug(description: string, maxLength: number = 40): string {
-  // Extract meaningful words (3-8 characters typically)
-  const words = description
+function tokenize(value: string, min = 3, max = 14): string[] {
+  return value
     .toLowerCase()
-    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter(word => word.length >= 3 && word.length <= 12)
-    .slice(0, 4) // Take first 4 meaningful words
-  
-  let slug = words.join('-')
-  
-  // Ensure it doesn't exceed maxLength
-  if (slug.length > maxLength) {
-    slug = slug.substring(0, maxLength).replace(/-[^-]*$/, '') // Cut at word boundary
+    .filter(word => word.length >= min && word.length <= max)
+}
+
+function generateContextSlug(observation: Observation, maxLength: number): string {
+  const tokens: string[] = []
+
+  const pushTokens = (candidates: string[]) => {
+    for (const candidate of candidates) {
+      if (!candidate) continue
+      if (tokens.includes(candidate)) continue
+      tokens.push(candidate)
+    }
   }
-  
-  return slug || 'observation'
+
+  pushTokens(tokenize(observation['Room/Area']))
+
+  if (observation['Observation Category'] === 'New Positive Observation') {
+    pushTokens(['positive'])
+  } else {
+    pushTokens(['atrisk'])
+  }
+
+  if (observation['High Risk + Significant Exposure']) {
+    pushTokens(tokenize(observation['High Risk + Significant Exposure']))
+  }
+
+  if (observation['General Category']) {
+    pushTokens(tokenize(observation['General Category']))
+  }
+
+  pushTokens(tokenize(observation['Observation Description']))
+
+  const slug = tokens
+    .join('-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+
+  if (!slug) {
+    return 'observation'
+  }
+
+  if (slug.length <= maxLength) {
+    return slug
+  }
+
+  const truncated = slug.substring(0, maxLength)
+  return truncated.replace(/-[^-]*$/, '') || truncated.replace(/-+$/, '') || 'observation'
 }
 
 export function deduplicateFilename(filename: string, existingFilenames: Set<string>): string {

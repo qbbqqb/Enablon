@@ -115,7 +115,27 @@ export default function Home() {
       })
 
       if (!response.ok) {
-        throw new Error(`Processing failed: Server error ${response.status}`)
+        let errorMessage = `Server error ${response.status}`
+
+        try {
+          const errorData = await response.clone().json()
+          if (typeof errorData?.message === 'string' && errorData.message.trim().length > 0) {
+            errorMessage = errorData.message
+          } else if (typeof errorData?.error === 'string' && errorData.error.trim().length > 0) {
+            errorMessage = errorData.error
+          }
+        } catch (jsonError) {
+          try {
+            const text = await response.text()
+            if (text.trim().length > 0) {
+              errorMessage = text
+            }
+          } catch (_) {
+            // Ignore secondary errors while reading response body
+          }
+        }
+
+        throw new Error(errorMessage)
       }
 
       const result = await response.json()
