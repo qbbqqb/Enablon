@@ -501,10 +501,11 @@ export async function POST(request: NextRequest) {
       if (sessionId) {
         const orderedTokens = observationImageSummaries.flatMap(summaryList => summaryList.map(summary => summary.token))
         setSessionData(sessionId, {
-          project: project as Project,
+          projectFallback: project as Project,
           failed,
           images: tokenToImage,
-          order: orderedTokens
+          order: orderedTokens,
+          observations: observationsWithMeta.map(({ __photoToken, __photoTokens, ...rest }) => rest)
         })
       }
 
@@ -518,8 +519,6 @@ export async function POST(request: NextRequest) {
       })
       scheduleProgressClose(sessionId)
 
-      const totalReviewImages = observationImageSummaries.reduce((sum, imageList) => sum + imageList.length, 0)
-
       // Return JSON for review
       return new Response(JSON.stringify({
         observations: observationsWithMeta,
@@ -528,7 +527,7 @@ export async function POST(request: NextRequest) {
         project,
         sessionId,
         totalImages: images.length,
-        processedImages: totalReviewImages
+        processedImages: observationImageSummaries.reduce((sum, imageList) => sum + imageList.length, 0)
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }

@@ -1,13 +1,14 @@
-import type { ProcessedImage, FailedItem } from '@/lib/types'
+import type { ProcessedImage, FailedItem, Observation } from '@/lib/types'
 import type { Project } from '@/lib/constants/enums'
 
 const SESSION_TTL_MS = 15 * 60 * 1000 // 15 minutes
 
 interface SessionData {
-  project: Project
+  projectFallback: Project
   failed: FailedItem[]
   images: Record<string, ProcessedImage>
   order: string[]
+  observations: Observation[]
   createdAt: number
 }
 
