@@ -53,8 +53,12 @@ export async function POST(request: NextRequest) {
     
     // For multi-project, use the first project from observations for ZIP structure
     // The actual project codes will be used per observation in the CSV and filename generation
+    const fallbackProject = sessionData.observations.length > 0
+      ? (sessionData.observations[0].Project as Project)
+      : sessionData.projectFallback
+
     const projectForZip = project === 'mixed' 
-      ? ((observations?.[0]?.Project as Project) || sessionData.project)
+      ? ((observations?.[0]?.Project as Project) || fallbackProject)
       : (project as Project)
     
     const imagesByToken = sessionData.images
