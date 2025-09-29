@@ -6,7 +6,7 @@ import { generatePhotoFilename, deduplicateFilename } from '../files/rename'
 
 export interface ZipContentInput {
   observations: Observation[]
-  images: ProcessedImage[]
+  images: Array<ProcessedImage | ProcessedImage[] | undefined>
   project: Project
   failed: FailedItem[]
 }
@@ -32,24 +32,32 @@ export function createZipStream(input: ZipContentInput): {
   
   // Add renamed photos - one observation per image (paired by index)
   observations.forEach((obs, index) => {
-    const image = images[index]
-    if (!image) return
+    const entry = images[index]
+    const imageList: ProcessedImage[] = Array.isArray(entry)
+      ? entry.filter((img): img is ProcessedImage => Boolean(img))
+      : entry
+        ? [entry]
+        : []
 
-    // Use the project code from the observation itself for multi-project scenarios
+    if (imageList.length === 0) {
+      return
+    }
+
     const obsProject = (obs.Project as Project) || project
-    const baseFilename = generatePhotoFilename(obsProject, index + 1, obs)
-    const finalFilename = deduplicateFilename(baseFilename, usedFilenames)
-    usedFilenames.add(finalFilename)
 
-    // Add image to photos/ directory
-    archive.append(image.buffer, { name: `photos/${finalFilename}` })
+    imageList.forEach((image, photoIdx) => {
+      const baseFilename = generatePhotoFilename(obsProject, index + 1, obs, photoIdx + 1)
+      const finalFilename = deduplicateFilename(baseFilename, usedFilenames)
+      usedFilenames.add(finalFilename)
 
-    // Track in manifest
-    manifest.push({
-      rowNumber: index + 1,
-      originalFilename: image.originalName,
-      renamedFilename: finalFilename,
-      observationDescription: obs['Observation Description']
+      archive.append(image.buffer, { name: `photos/${finalFilename}` })
+
+      manifest.push({
+        rowNumber: index + 1,
+        originalFilename: image.originalName,
+        renamedFilename: finalFilename,
+        observationDescription: obs['Observation Description']
+      })
     })
   })
   

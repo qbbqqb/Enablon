@@ -29,6 +29,7 @@ export interface Observation {
 
 export type ObservationDraft = Observation & {
   __photoToken?: string
+  __photoTokens?: string[]
 }
 
 export interface ProcessedImage {

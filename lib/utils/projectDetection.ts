@@ -16,29 +16,29 @@ export function detectProjectFromNotes(notes: string): Project | null {
  */
 export function detectAllProjectsFromNotes(notes: string): Project[] {
   if (!notes) return []
-  
-  const foundProjects: Set<Project> = new Set()
-  const upperNotes = notes.toUpperCase()
-  
-  // Look for exact project matches
-  for (const project of PROJECTS) {
-    const patterns = [
-      new RegExp(`\\b${project}\\b`, 'i'),           // Exact match: GVX04
-      new RegExp(`\\b${project.replace(/(\d)/, '-$1')}\\b`, 'i'),  // With dash: GVX-04
-      new RegExp(`\\b${project.replace(/(\d)/, ' $1')}\\b`, 'i'),  // With space: GVX 04
-      new RegExp(`\\bproject\\s+${project}\\b`, 'i'),             // "project GVX04"
-      new RegExp(`\\b${project}\\s+project\\b`, 'i'),             // "GVX04 project"
-    ]
-    
-    for (const pattern of patterns) {
-      if (pattern.test(upperNotes)) {
-        foundProjects.add(project)
-        break // Stop checking patterns for this project once found
-      }
+
+  const counts = new Map<Project, { count: number; firstIndex: number }>()
+  const pattern = /\bGVX\s*-?\s*(0[3-5])\b/gi
+  let match: RegExpExecArray | null
+
+  while ((match = pattern.exec(notes))) {
+    const project = (`GVX${match[1]}`) as Project
+    const existing = counts.get(project)
+    if (existing) {
+      existing.count += 1
+      existing.firstIndex = Math.min(existing.firstIndex, match.index)
+    } else {
+      counts.set(project, { count: 1, firstIndex: match.index })
     }
   }
-  
-  return Array.from(foundProjects)
+
+  return Array.from(counts.entries())
+    .sort((a, b) => {
+      const countDiff = b[1].count - a[1].count
+      if (countDiff !== 0) return countDiff
+      return a[1].firstIndex - b[1].firstIndex
+    })
+    .map(([project]) => project)
 }
 
 /**

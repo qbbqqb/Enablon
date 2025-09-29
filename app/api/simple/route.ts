@@ -429,49 +429,82 @@ export async function POST(request: NextRequest) {
     )
 
     if (mode === 'review') {
-      // Attempt to map each observation to the best matching photo based on
-      // optional fields the model may include: photo_index (1-based) or
-      // photo_indices (array). Fall back to same-index pairing.
-      const selectedImages = rawObservations.map((obs: any, i: number) => {
-        let idx: number | undefined
-        if (typeof obs?.photo_index === 'number') idx = obs.photo_index - 1
-        if (!idx && Array.isArray(obs?.photo_indices) && obs.photo_indices.length > 0) {
-          const first = obs.photo_indices[0]
-          if (typeof first === 'number') idx = first - 1
-        }
-        if (!idx && Array.isArray(obs?.photoIndexes) && obs.photoIndexes.length > 0) {
-          const first = obs.photoIndexes[0]
-          if (typeof first === 'number') idx = first - 1
-        }
-        if (typeof idx !== 'number' || idx < 0 || idx >= images.length) {
-          idx = i
-        }
-        return images[idx]
-      })
+      const tokenToImage: Record<string, ProcessedImage> = {}
+      const observationImageSummaries: Array<Array<{ token: string; originalIndex: number; originalName: string; mimeType: string }>> = []
 
-      const observationTokens = selectedImages.map(() =>
-        sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
-      )
+      const observationsWithMeta: ObservationDraft[] = observations.map((obs, i) => {
+        const resolvedIndices = new Set<number>()
 
-      const observationsWithMeta: ObservationDraft[] = observations.map((obs, idx) => ({
-        ...obs,
-        __photoToken: observationTokens[idx]
-      }))
+        if (typeof rawObservations[i]?.photo_index === 'number') {
+          resolvedIndices.add(rawObservations[i].photo_index - 1)
+        }
 
-      if (sessionId) {
-        const imageRecord: Record<string, ProcessedImage> = {}
-        observationTokens.forEach((token, idx) => {
-          const image = selectedImages[idx]
-          if (image) {
-            imageRecord[token] = image
-          }
+        if (Array.isArray(rawObservations[i]?.photo_indices)) {
+          rawObservations[i].photo_indices
+            .filter((value: any) => typeof value === 'number')
+            .forEach((value: number) => resolvedIndices.add(value - 1))
+        }
+
+        if (Array.isArray(rawObservations[i]?.photoIndexes)) {
+          rawObservations[i].photoIndexes
+            .filter((value: any) => typeof value === 'number')
+            .forEach((value: number) => resolvedIndices.add(value - 1))
+        }
+
+        if (resolvedIndices.size === 0) {
+          resolvedIndices.add(i)
+        }
+
+        const uniqueIndices = Array.from(resolvedIndices).filter(index => index >= 0 && index < images.length)
+        if (uniqueIndices.length === 0 && images[i]) {
+          uniqueIndices.push(i)
+        }
+
+        const tokens: string[] = []
+        const summaries: Array<{ token: string; originalIndex: number; originalName: string; mimeType: string }> = []
+
+        uniqueIndices.forEach((imageIndex, photoIdx) => {
+          const image = images[imageIndex]
+          if (!image) return
+          const token = sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
+          tokens.push(token)
+          tokenToImage[token] = image
+          summaries.push({
+            token,
+            originalIndex: image.originalIndex,
+            originalName: image.originalName,
+            mimeType: image.mimeType
+          })
         })
 
+        if (tokens.length === 0 && images[i]) {
+          const fallbackToken = sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
+          tokenToImage[fallbackToken] = images[i]
+          tokens.push(fallbackToken)
+          summaries.push({
+            token: fallbackToken,
+            originalIndex: images[i].originalIndex,
+            originalName: images[i].originalName,
+            mimeType: images[i].mimeType
+          })
+        }
+
+        observationImageSummaries.push(summaries)
+
+        return {
+          ...obs,
+          __photoToken: tokens[0],
+          __photoTokens: tokens
+        }
+      })
+
+      if (sessionId) {
+        const orderedTokens = observationImageSummaries.flatMap(summaryList => summaryList.map(summary => summary.token))
         setSessionData(sessionId, {
           project: project as Project,
           failed,
-          images: imageRecord,
-          order: observationTokens
+          images: tokenToImage,
+          order: orderedTokens
         })
       }
 
@@ -485,22 +518,17 @@ export async function POST(request: NextRequest) {
       })
       scheduleProgressClose(sessionId)
 
-      const imageSummaries = selectedImages.map((img, idx) => ({
-        originalIndex: img.originalIndex,
-        originalName: img.originalName,
-        mimeType: img.mimeType,
-        __photoToken: observationTokens[idx]
-      }))
+      const totalReviewImages = observationImageSummaries.reduce((sum, imageList) => sum + imageList.length, 0)
 
       // Return JSON for review
       return new Response(JSON.stringify({
         observations: observationsWithMeta,
-        images: imageSummaries,
+        images: observationImageSummaries,
         failed,
         project,
         sessionId,
         totalImages: images.length,
-        processedImages: observations.length
+        processedImages: totalReviewImages
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }

@@ -62,46 +62,55 @@ export async function POST(request: NextRequest) {
     const usedFallback = new Set<string>()
 
     const sanitizedObservations: Observation[] = []
-    const exportImages: ProcessedImage[] = []
+    const exportImageGroups: ProcessedImage[][] = []
 
     for (const draft of observations as ObservationDraft[]) {
-      const { __photoToken, ...rest } = draft
-      const token = typeof __photoToken === 'string' ? __photoToken : undefined
+      const { __photoToken, __photoTokens, ...rest } = draft
+      const tokens = Array.isArray(__photoTokens) && __photoTokens.length > 0
+        ? __photoTokens
+        : typeof __photoToken === 'string' && __photoToken
+          ? [__photoToken]
+          : []
 
-      let image: ProcessedImage | undefined
-      if (token && imagesByToken[token]) {
-        image = imagesByToken[token]
-      } else {
+      const imagesForObservation: ProcessedImage[] = []
+
+      tokens.forEach(token => {
+        const image = imagesByToken[token]
+        if (image) {
+          imagesForObservation.push(image)
+        }
+      })
+
+      if (imagesForObservation.length === 0) {
         const fallbackToken = orderedTokens.find(t => !usedFallback.has(t))
         if (fallbackToken) {
-          image = imagesByToken[fallbackToken]
-          usedFallback.add(fallbackToken)
+          const image = imagesByToken[fallbackToken]
+          if (image) {
+            imagesForObservation.push(image)
+            usedFallback.add(fallbackToken)
+          }
         }
       }
 
-      if (!image && orderedTokens.length > 0) {
-        image = imagesByToken[orderedTokens[0]]
-      }
-
-      if (image) {
-        exportImages.push(image)
+      if (imagesForObservation.length === 0 && orderedTokens.length > 0) {
+        const image = imagesByToken[orderedTokens[0]]
+        if (image) {
+          imagesForObservation.push(image)
+        }
       }
 
       sanitizedObservations.push(rest as Observation)
+      exportImageGroups.push(imagesForObservation)
     }
 
-    if (exportImages.length === 0) {
+    if (exportImageGroups.every(group => group.length === 0)) {
       return new Response('No processed images available for export. Please rerun the analysis.', { status: 410 })
-    }
-
-    while (exportImages.length < sanitizedObservations.length) {
-      exportImages.push(exportImages[0])
     }
 
     // Create ZIP with reviewed observations and images
     const { archive } = createZipStream({
       observations: sanitizedObservations,
-      images: exportImages,
+      images: exportImageGroups,
       project: projectForZip,
       failed: sessionData.failed as FailedItem[]
     })

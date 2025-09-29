@@ -52,6 +52,8 @@ export default function ObservationReview({
   const duplicateObservation = (index: number) => {
     const updated = [...editedObservations]
     const duplicate = { ...editedObservations[index] }
+    delete duplicate.__photoToken
+    delete duplicate.__photoTokens
     updated.splice(index + 1, 0, duplicate)
     setEditedObservations(updated)
   }

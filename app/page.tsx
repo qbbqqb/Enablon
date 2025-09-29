@@ -29,7 +29,6 @@ export default function Home() {
   const [eventSource, setEventSource] = useState<EventSource | null>(null)
   const [showReview, setShowReview] = useState(false)
   const [observations, setObservations] = useState<ObservationDraft[]>([])
-  const [processedImages, setProcessedImages] = useState<any[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
 
@@ -147,7 +146,6 @@ export default function Home() {
       }
 
       setObservations(result.observations || [])
-      setProcessedImages(result.images || [])
       setProgress(100)
       setProgressLabel(`Analysis complete - ${result.observations?.length || 0} observations ready for review`)
       setIsProcessing(false)
@@ -250,7 +248,6 @@ export default function Home() {
       console.log(`Batch processing complete: ${combinedResults.observations.length} total observations, ${combinedResults.failed.length} failed`)
 
       setObservations(combinedResults.observations)
-      setProcessedImages(combinedResults.images)
 
       // Close SSE connection
       eventSource?.close()
@@ -328,7 +325,6 @@ export default function Home() {
       setFiles([])
       setNotes('')
       setObservations([])
-      setProcessedImages([])
       setShowReview(false)
       setDetectedProject(null)
       setAllDetectedProjects([])
@@ -345,7 +341,6 @@ export default function Home() {
   const handleCancelReview = () => {
     setShowReview(false)
     setObservations([])
-    setProcessedImages([])
     setProgress(0)
     setProgressLabel('')
     setProgressDetails({})
