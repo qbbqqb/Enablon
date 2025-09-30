@@ -110,7 +110,8 @@ export default function Home() {
         method: 'POST',
         body: formData,
         headers: {
-          'X-Mode': 'review'
+          'X-Mode': 'review',
+          'X-Session-Id': sessionId
         }
       })
 

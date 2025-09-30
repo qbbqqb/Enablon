@@ -7,11 +7,15 @@ export function generatePhotoFilename(
   observation: Observation,
   photoIndex: number = 1
 ): string {
-  // Zero-padded observation number for CSV cross-reference
-  const obsNoStr = obsNo.toString().padStart(3, '0')
+  const locationSegment = pickKeywordSegment(observation['Room/Area'], 'Site')
 
-  // Contextual slug derived from room area, category, and description
-  const description = generateContextSlug(observation, 45)
+  const issueSource =
+    observation['High Risk + Significant Exposure'] ||
+    observation['General Category'] ||
+    observation['Observation Category'] ||
+    observation['Observation Description']
+
+  const issueSegment = pickKeywordSegment(issueSource, 'Issue')
 
   // Date (YYYYMMDD)
   const dateParts = observation['Notification Date'].split('/')
@@ -20,62 +24,55 @@ export function generatePhotoFilename(
   // Photo number for multiple photos per observation
   const photoNum = photoIndex > 1 ? `-${photoIndex}` : ''
 
-  // Format: PROJECT-OBSNO-DESCRIPTION-DATE
-  return `${project}-${obsNoStr}-${description}-${dateStr}${photoNum}.jpg`
+  // Format: PROJECT-LOCATION-ISSUE-YYYYMMDD
+  return `${project}-${locationSegment}-${issueSegment}-${dateStr}${photoNum}.jpg`
 }
 
-function tokenize(value: string, min = 3, max = 14): string[] {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(word => word.length >= min && word.length <= max)
+const STOP_WORDS = new Set([
+  'new',
+  'observation',
+  'atrisk',
+  'at',
+  'risk',
+  'issue',
+  'general',
+  'category',
+  'positive',
+  'other'
+])
+
+function pickKeywordSegment(source: string | undefined, fallback: string): string {
+  const tokens = (source?.match(/[A-Za-z0-9]+/g) ?? []).map(token => token.trim()).filter(Boolean)
+  if (tokens.length === 0) {
+    return fallback
+  }
+
+  const preferred =
+    tokens.find(token => {
+      const normalized = token.toLowerCase()
+      return !STOP_WORDS.has(normalized) && normalized.length > 2
+    }) || tokens.find(token => token.length > 0)
+
+  if (!preferred) {
+    return fallback
+  }
+
+  return truncateSegment(formatSegment(preferred)) || fallback
 }
 
-function generateContextSlug(observation: Observation, maxLength: number): string {
-  const tokens: string[] = []
-
-  const pushTokens = (candidates: string[]) => {
-    for (const candidate of candidates) {
-      if (!candidate) continue
-      if (tokens.includes(candidate)) continue
-      tokens.push(candidate)
-    }
+function formatSegment(raw: string): string {
+  if (!raw) return ''
+  if (raw.length <= 4 && raw === raw.toUpperCase()) {
+    return raw.toUpperCase()
   }
+  return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
+}
 
-  pushTokens(tokenize(observation['Room/Area']))
-
-  if (observation['Observation Category'] === 'New Positive Observation') {
-    pushTokens(['positive'])
-  } else {
-    pushTokens(['atrisk'])
+function truncateSegment(segment: string, maxLength = 18): string {
+  if (segment.length <= maxLength) {
+    return segment
   }
-
-  if (observation['High Risk + Significant Exposure']) {
-    pushTokens(tokenize(observation['High Risk + Significant Exposure']))
-  }
-
-  if (observation['General Category']) {
-    pushTokens(tokenize(observation['General Category']))
-  }
-
-  pushTokens(tokenize(observation['Observation Description']))
-
-  const slug = tokens
-    .join('-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-
-  if (!slug) {
-    return 'observation'
-  }
-
-  if (slug.length <= maxLength) {
-    return slug
-  }
-
-  const truncated = slug.substring(0, maxLength)
-  return truncated.replace(/-[^-]*$/, '') || truncated.replace(/-+$/, '') || 'observation'
+  return segment.slice(0, maxLength)
 }
 
 export function deduplicateFilename(filename: string, existingFilenames: Set<string>): string {

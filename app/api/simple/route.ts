@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { randomUUID } from 'crypto'
+import { jsonrepair } from 'jsonrepair'
 import {
   PROJECTS,
   ROOM_AREAS,
@@ -334,8 +335,21 @@ Return only the JSON array.`
   try {
     observations = JSON.parse(cleanContent)
   } catch (error) {
-    console.error('Failed to parse AI response:', cleanContent)
-    throw new Error(`Failed to parse AI response as JSON: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    const initialError = error instanceof Error ? error.message : 'Unknown error'
+    const truncatedContent = cleanContent.length > 2000 ? `${cleanContent.slice(0, 2000)}…` : cleanContent
+    console.warn('AI response JSON parse failed, attempting repair:', initialError)
+
+    try {
+      const repairedContent = jsonrepair(cleanContent)
+      observations = JSON.parse(repairedContent)
+      console.warn('AI response required JSON repair before parsing succeeded')
+    } catch (repairError) {
+      console.error('Failed to parse AI response even after repair attempt:', truncatedContent)
+      const repairMessage = repairError instanceof Error ? repairError.message : 'Unknown repair error'
+      throw new Error(
+        `Failed to parse AI response as JSON: ${initialError} (repair attempt: ${repairMessage})`
+      )
+    }
   }
 
   if (!Array.isArray(observations)) {
@@ -348,7 +362,7 @@ Return only the JSON array.`
 }
 
 export async function POST(request: NextRequest) {
-  let sessionId: string | undefined
+  let sessionId: string | undefined = request.headers.get('x-session-id') ?? undefined
 
   try {
     console.log('=== Simple API Started ===')
@@ -360,8 +374,8 @@ export async function POST(request: NextRequest) {
     const notes = (fdAny.get('notes') as string) || ''
     const mode = request.headers.get('X-Mode') || 'zip'
     const potentialSessionId = fdAny.get('sessionId')
-    if (typeof potentialSessionId === 'string') {
-      sessionId = potentialSessionId
+    if (typeof potentialSessionId === 'string' && potentialSessionId.trim().length > 0) {
+      sessionId = potentialSessionId.trim()
     }
 
     const notificationDate = new Intl.DateTimeFormat('en-GB', {

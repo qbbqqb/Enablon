@@ -5,7 +5,7 @@
       "dom.iterable",
       "es2017"
     ],
-    "types": ["node", "next"],
+    "types": ["node", "next", "jest"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,

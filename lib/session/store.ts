@@ -12,7 +12,15 @@ interface SessionData {
   createdAt: number
 }
 
-const sessionStore = new Map<string, SessionData>()
+const globalSession = globalThis as typeof globalThis & {
+  __enablonSessionStore__?: Map<string, SessionData>
+}
+
+const sessionStore = globalSession.__enablonSessionStore__ ?? new Map<string, SessionData>()
+
+if (!globalSession.__enablonSessionStore__) {
+  globalSession.__enablonSessionStore__ = sessionStore
+}
 
 export function setSessionData(sessionId: string, data: Omit<SessionData, 'createdAt'>) {
   sessionStore.set(sessionId, {
