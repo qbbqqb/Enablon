@@ -10,10 +10,11 @@ export function generatePhotoFilename(
   const locationSegment = pickKeywordSegment(observation['Room/Area'], 'Site')
 
   const issueSource =
+    observation['Observation Description'] ||
     observation['High Risk + Significant Exposure'] ||
     observation['General Category'] ||
     observation['Observation Category'] ||
-    observation['Observation Description']
+    observation['Interim Corrective Actions']
 
   const issueSegment = pickKeywordSegment(issueSource, 'Issue')
 

@@ -20,6 +20,7 @@ import type { Observation, ObservationDraft, FailedItem, ProcessedImage } from '
 import { sendProgressUpdate, closeProgressConnection } from '@/lib/progress/manager'
 import type { ProgressEvent } from '@/lib/progress/manager'
 import { setSessionData } from '@/lib/session/store'
+import { analyzeImages } from '@/lib/ai/analyze'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -188,12 +189,43 @@ function normalizeObservation(
   return observation
 }
 
+function adjustPhotoReferenceIndices(observation: any, offset: number): any {
+  if (!observation || offset === 0) {
+    return observation
+  }
+
+  const clone: Record<string, unknown> = { ...observation }
+
+  if (typeof clone.photo_index === 'number') {
+    clone.photo_index = clone.photo_index + offset
+  }
+
+  if (typeof clone.photoIndex === 'number') {
+    clone.photoIndex = clone.photoIndex + offset
+  }
+
+  if (Array.isArray(clone.photo_indices)) {
+    clone.photo_indices = clone.photo_indices.map(value =>
+      typeof value === 'number' ? value + offset : value
+    )
+  }
+
+  if (Array.isArray(clone.photoIndexes)) {
+    clone.photoIndexes = clone.photoIndexes.map(value =>
+      typeof value === 'number' ? value + offset : value
+    )
+  }
+
+  return clone
+}
+
 async function callSimpleAI(
   images: any[],
   project: Project,
   notificationDate: string,
-  notes?: string
-): Promise<Observation[]> {
+  notes?: string,
+  imageOffset: number = 0
+): Promise<any[]> {
   console.log(`Calling AI with ${images.length} images and ${notes?.length || 0} chars of notes`)
 
   const prompt = `You are a construction safety inspector creating Enablon/Compass observations.
@@ -356,9 +388,99 @@ Return only the JSON array.`
     throw new Error('AI response is not an array of observations')
   }
 
-  console.log(`AI returned ${observations.length} observations`)
+  const adjusted = imageOffset === 0
+    ? observations
+    : observations.map(obs => adjustPhotoReferenceIndices(obs, imageOffset))
 
-  return observations
+  console.log(`AI returned ${adjusted.length} observations${imageOffset ? ` (offset ${imageOffset})` : ''}`)
+
+  return adjusted
+}
+
+function resolveObservationPhotoIndices(
+  rawObservations: any[],
+  observationIndex: number,
+  totalImages: number
+): number[] {
+  const raw = rawObservations[observationIndex]
+  const indices = new Set<number>()
+
+  const addIndex = (value: unknown) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return
+    }
+    const zeroBased = value > 0 ? value - 1 : value
+    indices.add(zeroBased)
+  }
+
+  if (raw && typeof raw === 'object') {
+    if (typeof raw.photo_index === 'number') {
+      addIndex(raw.photo_index)
+    }
+
+    if (typeof raw.photoIndex === 'number') {
+      addIndex(raw.photoIndex)
+    }
+
+    if (Array.isArray(raw.photo_indices)) {
+      raw.photo_indices.forEach(addIndex)
+    }
+
+    if (Array.isArray(raw.photoIndexes)) {
+      raw.photoIndexes.forEach(addIndex)
+    }
+
+    if (Array.isArray(raw.photoIndices)) {
+      raw.photoIndices.forEach(addIndex)
+    }
+  }
+
+  const unique = Array.from(indices).filter(index => index >= 0 && index < totalImages)
+
+  if (unique.length > 0) {
+    return unique
+  }
+
+  if (observationIndex < totalImages) {
+    return [observationIndex]
+  }
+
+  if (totalImages === 0) {
+    return []
+  }
+
+  return [Math.max(0, totalImages - 1)]
+}
+
+function mapObservationImages(
+  rawObservations: any[],
+  observations: Observation[],
+  images: ProcessedImage[]
+): Array<{ indices: number[]; images: ProcessedImage[] }> {
+  return observations.map((_, observationIndex) => {
+    const resolvedIndices = resolveObservationPhotoIndices(rawObservations, observationIndex, images.length)
+    const matchedImages: ProcessedImage[] = []
+    const matchedIndices: number[] = []
+
+    resolvedIndices.forEach(index => {
+      const image = images[index]
+      if (image) {
+        matchedImages.push(image)
+        matchedIndices.push(index)
+      }
+    })
+
+    if (matchedImages.length === 0 && images.length > 0) {
+      const fallbackIndex = Math.min(observationIndex, images.length - 1)
+      const fallbackImage = images[fallbackIndex]
+      if (fallbackImage) {
+        matchedImages.push(fallbackImage)
+        matchedIndices.push(fallbackIndex)
+      }
+    }
+
+    return { indices: matchedIndices, images: matchedImages }
+  })
 }
 
 export async function POST(request: NextRequest) {
@@ -424,62 +546,157 @@ export async function POST(request: NextRequest) {
     reportProgress(sessionId, 50, 'Analyzing images with Gemini...', 'analysis', {
       total: images.length
     })
-    const rawObservations: any[] = await callSimpleAI(
-      images,
-      project as Project,
-      notificationDate,
-      notes || undefined
-    )
 
-    console.log(`Got ${rawObservations.length} observations from AI`)
+    let simpleObservations: any[] | undefined
+    let analysisMode: 'simple' | 'chunked' | 'analyze' = 'simple'
+
+    try {
+      simpleObservations = await callSimpleAI(
+        images,
+        project as Project,
+        notificationDate,
+        notes || undefined
+      )
+    } catch (simpleError) {
+      console.warn('Simple AI call failed, falling back to batch analyzer:', simpleError)
+      simpleObservations = undefined
+    }
+
+    const expectedObservations = images.length
+    let sourceObservations: any[] | undefined = simpleObservations
+
+    if (!simpleObservations || simpleObservations.length !== expectedObservations) {
+      const returnedCount = simpleObservations?.length ?? 0
+      console.warn(
+        `Simple AI returned ${returnedCount} observations, expected ${expectedObservations}. Attempting chunked retry.`
+      )
+
+      const chunkSizes = Array.from(
+        new Set(
+          [
+            Math.max(1, Math.min(8, expectedObservations)),
+            Math.max(1, Math.min(4, expectedObservations)),
+            Math.max(1, Math.min(2, expectedObservations)),
+            1
+          ].filter(Boolean)
+        )
+      )
+
+      let chunkedObservations: any[] | undefined
+
+      for (let attempt = 0; attempt < chunkSizes.length; attempt++) {
+        const chunkSize = chunkSizes[attempt]
+
+        console.warn(`Chunk retry attempt ${attempt + 1} using chunk size ${chunkSize}`)
+
+        reportProgress(sessionId, 55 + attempt * 2, 'Retrying with smaller batches...', 'analysis', {
+          processed: Math.min(returnedCount, expectedObservations),
+          total: expectedObservations
+        })
+
+        const currentChunkResults: any[] = []
+        let chunkFailure = false
+
+        for (let start = 0; start < images.length; start += chunkSize) {
+          const chunk = images.slice(start, start + chunkSize)
+
+          try {
+            const chunkResult = await callSimpleAI(
+              chunk,
+              project as Project,
+              notificationDate,
+              notes || undefined,
+              start
+            )
+
+            if (chunkResult.length !== chunk.length) {
+              console.warn(
+                `Chunk starting at index ${start} returned ${chunkResult.length} observations for ${chunk.length} images.`
+              )
+              chunkFailure = true
+              break
+            }
+
+            currentChunkResults.push(...chunkResult)
+          } catch (chunkError) {
+            console.warn(`Chunked simple AI call failed at index ${start}:`, chunkError)
+            chunkFailure = true
+            break
+          }
+        }
+
+        if (!chunkFailure && currentChunkResults.length === expectedObservations) {
+          chunkedObservations = currentChunkResults
+          break
+        }
+
+        console.warn(`Chunk retry with size ${chunkSize} failed. Trying next configuration if available.`)
+      }
+
+      if (chunkedObservations && chunkedObservations.length === expectedObservations) {
+        analysisMode = 'chunked'
+        sourceObservations = chunkedObservations
+      } else {
+        console.warn('All chunked retries failed, falling back to full analyzer.')
+
+        reportProgress(sessionId, 60, 'Retrying with batch analysis...', 'analysis', {
+          processed: Math.min(chunkedObservations?.length ?? returnedCount, expectedObservations),
+          total: expectedObservations
+        })
+
+        const { observations: fallbackObservations, failed: fallbackFailed } = await analyzeImages({
+          images,
+          project: project as Project,
+          notes: notes || undefined,
+          sessionId: sessionId || undefined
+        })
+
+        analysisMode = 'analyze'
+        sourceObservations = fallbackObservations
+        failed.push(...fallbackFailed)
+      }
+    }
+
+    if (!sourceObservations || sourceObservations.length === 0) {
+      throw new Error('AI analysis produced no observations')
+    }
+
+    const observations = analysisMode === 'analyze'
+      ? (sourceObservations as Observation[])
+      : (sourceObservations as any[]).map(obs =>
+          normalizeObservation(obs, project as Project, notificationDate)
+        )
+
+    const rawObservations = analysisMode === 'analyze'
+      ? sourceObservations.map((_, index) => ({ photo_index: index + 1 }))
+      : (sourceObservations as any[])
+
+    const observationImageMatches = mapObservationImages(rawObservations, observations, images)
 
     reportProgress(sessionId, 75, 'Applying project rules...', 'analysis', {
-      processed: rawObservations.length,
+      processed: observations.length,
       total: images.length
     })
 
-    const observations = rawObservations.map(obs =>
-      normalizeObservation(obs, project as Project, notificationDate)
-    )
+    if (analysisMode === 'analyze') {
+      console.log(`Got ${observations.length} observations from batch analyzer fallback`)
+    } else if (analysisMode === 'chunked') {
+      console.log(`Got ${observations.length} observations from chunked simple AI retry`)
+    } else {
+      console.log(`Got ${observations.length} observations from simple AI response`)
+    }
 
     if (mode === 'review') {
       const tokenToImage: Record<string, ProcessedImage> = {}
       const observationImageSummaries: Array<Array<{ token: string; originalIndex: number; originalName: string; mimeType: string }>> = []
 
       const observationsWithMeta: ObservationDraft[] = observations.map((obs, i) => {
-        const resolvedIndices = new Set<number>()
-
-        if (typeof rawObservations[i]?.photo_index === 'number') {
-          resolvedIndices.add(rawObservations[i].photo_index - 1)
-        }
-
-        if (Array.isArray(rawObservations[i]?.photo_indices)) {
-          rawObservations[i].photo_indices
-            .filter((value: any) => typeof value === 'number')
-            .forEach((value: number) => resolvedIndices.add(value - 1))
-        }
-
-        if (Array.isArray(rawObservations[i]?.photoIndexes)) {
-          rawObservations[i].photoIndexes
-            .filter((value: any) => typeof value === 'number')
-            .forEach((value: number) => resolvedIndices.add(value - 1))
-        }
-
-        if (resolvedIndices.size === 0) {
-          resolvedIndices.add(i)
-        }
-
-        const uniqueIndices = Array.from(resolvedIndices).filter(index => index >= 0 && index < images.length)
-        if (uniqueIndices.length === 0 && images[i]) {
-          uniqueIndices.push(i)
-        }
-
+        const imageMatch = observationImageMatches[i]
+        const { images: matchedImages } = imageMatch
         const tokens: string[] = []
         const summaries: Array<{ token: string; originalIndex: number; originalName: string; mimeType: string }> = []
 
-        uniqueIndices.forEach((imageIndex, photoIdx) => {
-          const image = images[imageIndex]
-          if (!image) return
+        matchedImages.forEach((image, photoIdx) => {
           const token = sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
           tokens.push(token)
           tokenToImage[token] = image
@@ -493,13 +710,14 @@ export async function POST(request: NextRequest) {
 
         if (tokens.length === 0 && images[i]) {
           const fallbackToken = sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
-          tokenToImage[fallbackToken] = images[i]
+          const fallbackImage = images[i]
+          tokenToImage[fallbackToken] = fallbackImage
           tokens.push(fallbackToken)
           summaries.push({
             token: fallbackToken,
-            originalIndex: images[i].originalIndex,
-            originalName: images[i].originalName,
-            mimeType: images[i].mimeType
+            originalIndex: fallbackImage.originalIndex,
+            originalName: fallbackImage.originalName,
+            mimeType: fallbackImage.mimeType
           })
         }
 
@@ -553,9 +771,19 @@ export async function POST(request: NextRequest) {
         processed: observations.length,
         total: images.length
       })
+      const imagesForZip = observationImageMatches.map(match => {
+        if (match.images.length === 0) {
+          return undefined
+        }
+        if (match.images.length === 1) {
+          return match.images[0]
+        }
+        return match.images
+      })
+
       const { archive } = createZipStream({
         observations,
-        images: images.slice(0, observations.length),
+        images: imagesForZip,
         project: project as Project,
         failed
       })
