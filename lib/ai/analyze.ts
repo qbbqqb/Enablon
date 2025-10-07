@@ -342,10 +342,15 @@ YOU MUST NEVER CREATE MORE OBSERVATIONS THAN NUMBERED NOTES. This is the most cr
 CRITICAL: Use these inspector notes as the PRIMARY SOURCE for observations. Match each numbered note to photos:
 - ONE numbered note = ONE observation (even if multiple photos show the same issue)
 - If multiple photos relate to one numbered note, create ONE observation covering all photos
-- Use the exact location details from notes (e.g., "COLO3 CELL1", "Externals South")
-- MULTIPLE LOCATIONS: If a note mentions multiple locations (e.g., "COLO3, COLO4" or "COLO3 and COLO4"), include ALL locations in the Observation Description and use the most appropriate Room/Area field (typically "COLO or AZ" for multi-location issues)
+- PRESERVE EXACT LOCATION DETAILS from notes in the Observation Description field:
+  * If note says "COLO3 CELL1" → Include "COLO3 CELL1" in description
+  * If note says "COLO3, COLO4" → Include "COLO3 and COLO4" in description
+  * If note says "Externals West" → Include "Externals West" in description
+  * If note says "Battery room 02" → Include "Battery room 02" in description
+- MULTIPLE LOCATIONS: When a note mentions multiple areas (e.g., "COLO3, COLO4"), you MUST mention ALL locations in the Observation Description. Use "COLO or AZ" for the Room/Area field.
+  * Example: Note "COLO3, COLO4 - Material storage needs improvement" → Description must say "Material storage needs to be improved in COLO3 and COLO4 areas"
 - Include contractor names when mentioned (e.g., "Jones Engineering", "Salboheds")
-- Use the inspector's description as the basis, don't rewrite their findings
+- Use the inspector's description as the basis, don't rewrite their findings or remove location details
 - Professional tone suitable for direct contractor communication${allProjects && allProjects.length > 1 ? ' Pay special attention project-specific mentions and assign observations to the correct project.' : ''}` : ''}
 
 Use only these enumerations:
@@ -411,8 +416,12 @@ PROFESSIONAL WRITING REQUIREMENTS:
 - Avoid unnecessary words: "appears to be", "seems to", "potentially", "could be"
 - Never use: "image", "photo", "visible", "observed", "The image shows", "can be seen"
 - Write statements as facts: "Scaffolding materials stored on North Spine Road" not "Materials are observed to be stored"
-- Include specific locations from inspector notes: exact COLO areas, room numbers, contractor names
-- When multiple locations mentioned (e.g., "COLO3, COLO4"), include ALL locations in the description: "Material storage needs improvement in COLO3 and COLO4 areas"
+- CRITICAL: ALWAYS include specific location details from inspector notes in the Observation Description:
+  * Include exact COLO areas (e.g., "COLO3", "COLO2 CELL1")
+  * Include room identifiers (e.g., "Battery room 02", "Externals West")
+  * Include contractor names (e.g., "Jones Engineering", "Salboheds", "DVS")
+  * When multiple locations mentioned, include ALL: "Material storage needs improvement in COLO3 and COLO4 areas"
+- DO NOT remove or generalize location information from the notes - contractors need exact locations
 - Keep descriptions concise but complete - ready for immediate contractor action
 
 PHOTO-CONTEXT MATCHING ALGORITHM:
