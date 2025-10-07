@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { ObservationDraft } from '@/lib/types'
 import {
   PROJECTS,
+  PROJECT_MAPPINGS,
   ROOM_AREAS,
   OBSERVATION_CATEGORIES,
   CATEGORY_TYPES,
@@ -12,6 +13,7 @@ import {
   CONSTRUCTION_PHASES,
   SEVERITY_LEVELS
 } from '@/lib/constants/enums'
+import type { Project } from '@/lib/constants/enums'
 
 interface ObservationReviewProps {
   observations: ObservationDraft[]
@@ -32,7 +34,7 @@ export default function ObservationReview({
   const updateObservation = (index: number, field: keyof ObservationDraft, value: string) => {
     const updated = [...editedObservations]
     updated[index] = { ...updated[index], [field]: value }
-    
+
     // Handle category type exclusivity
     if (field === 'Category Type') {
       if (value === 'HRA + Significant Exposure') {
@@ -41,7 +43,16 @@ export default function ObservationReview({
         updated[index]['High Risk + Significant Exposure'] = ''
       }
     }
-    
+
+    // Handle project change - update responsible party and person notified
+    if (field === 'Project') {
+      const projectMapping = PROJECT_MAPPINGS[value as Project]
+      if (projectMapping) {
+        updated[index]['Responsible Party'] = projectMapping.responsibleParty
+        updated[index]['Person Notified'] = projectMapping.personNotified
+      }
+    }
+
     setEditedObservations(updated)
   }
 
