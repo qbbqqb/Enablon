@@ -342,15 +342,26 @@ YOU MUST NEVER CREATE MORE OBSERVATIONS THAN NUMBERED NOTES. This is the most cr
 CRITICAL: Use these inspector notes as the PRIMARY SOURCE for observations. Match each numbered note to photos:
 - ONE numbered note = ONE observation (even if multiple photos show the same issue)
 - If multiple photos relate to one numbered note, create ONE observation covering all photos
-- PRESERVE EXACT LOCATION DETAILS from notes in the Observation Description field:
-  * If note says "COLO3 CELL1" → Include "COLO3 CELL1" in description
-  * If note says "COLO3, COLO4" → Include "COLO3 and COLO4" in description
-  * If note says "Externals West" → Include "Externals West" in description
-  * If note says "Battery room 02" → Include "Battery room 02" in description
-- MULTIPLE LOCATIONS: When a note mentions multiple areas (e.g., "COLO3, COLO4"), you MUST mention ALL locations in the Observation Description. Use "COLO or AZ" for the Room/Area field.
-  * Example: Note "COLO3, COLO4 - Material storage needs improvement" → Description must say "Material storage needs to be improved in COLO3 and COLO4 areas"
-- Include contractor names when mentioned (e.g., "Jones Engineering", "Salboheds")
-- Use the inspector's description as the basis, don't rewrite their findings or remove location details
+
+ABSOLUTE REQUIREMENT - LOCATION PRESERVATION:
+You MUST include the exact location from the note at the START of the Observation Description. This is MANDATORY.
+
+Examples of CORRECT descriptions:
+- Note: "COLO3 - materials leaning against columns" → Description: "COLO3: Materials leaning against columns, which may fall"
+- Note: "COLO3, COLO4 - Material storage needs improvement" → Description: "COLO3 and COLO4: Material storage needs to be improved"
+- Note: "COLO5 Externals West - Waste bin issue" → Description: "COLO5 Externals West: Waste bin with unsupported strap used for fixing"
+- Note: "Battery room 02 - Rebars without caps" → Description: "Battery room 02: Rebars holding earthing cables without caps"
+- Note: "COLO2 - Jones Engineering lifting issue" → Description: "COLO2: Jones Engineering operatives lifting a busbar with unclear method"
+
+Examples of WRONG descriptions (DO NOT DO THIS):
+- ❌ "Material storage needs to be improved" (location missing!)
+- ❌ "Waste bin with unsupported strap" (location missing!)
+- ❌ "Rebars holding cables without caps" (location missing!)
+
+MANDATORY FORMAT: Start every Observation Description with the location from the note, followed by a colon, then the issue.
+
+- Include contractor names when mentioned (e.g., "Jones Engineering", "Salboheds", "DVS")
+- Use the inspector's description as the basis, don't rewrite their findings or remove ANY details
 - Professional tone suitable for direct contractor communication${allProjects && allProjects.length > 1 ? ' Pay special attention project-specific mentions and assign observations to the correct project.' : ''}` : ''}
 
 Use only these enumerations:
@@ -416,12 +427,25 @@ PROFESSIONAL WRITING REQUIREMENTS:
 - Avoid unnecessary words: "appears to be", "seems to", "potentially", "could be"
 - Never use: "image", "photo", "visible", "observed", "The image shows", "can be seen"
 - Write statements as facts: "Scaffolding materials stored on North Spine Road" not "Materials are observed to be stored"
-- CRITICAL: ALWAYS include specific location details from inspector notes in the Observation Description:
-  * Include exact COLO areas (e.g., "COLO3", "COLO2 CELL1")
-  * Include room identifiers (e.g., "Battery room 02", "Externals West")
-  * Include contractor names (e.g., "Jones Engineering", "Salboheds", "DVS")
-  * When multiple locations mentioned, include ALL: "Material storage needs improvement in COLO3 and COLO4 areas"
-- DO NOT remove or generalize location information from the notes - contractors need exact locations
+
+CRITICAL LOCATION REQUIREMENT (MOST IMPORTANT RULE):
+Every Observation Description MUST start with the location from the inspector's note, followed by a colon.
+
+CORRECT FORMAT EXAMPLES:
+✓ "COLO3: Materials leaning against columns"
+✓ "COLO3 and COLO4: Material storage needs improvement"
+✓ "COLO5 Externals West: Waste bin with unsupported strap"
+✓ "Battery room 02: Rebars without caps"
+✓ "COLO2: Jones Engineering lifting busbar with unclear method"
+
+WRONG FORMAT EXAMPLES (NEVER DO THIS):
+✗ "Materials leaning against columns" (WHERE? Location missing!)
+✗ "Material storage needs improvement" (IN WHICH AREA? Missing!)
+✗ "Waste bin issue" (WHICH LOCATION? Missing!)
+
+If you write a description without the location at the start, you have FAILED this task.
+
+- Include contractor names in the description (e.g., "Jones Engineering", "Salboheds", "DVS")
 - Keep descriptions concise but complete - ready for immediate contractor action
 
 PHOTO-CONTEXT MATCHING ALGORITHM:
