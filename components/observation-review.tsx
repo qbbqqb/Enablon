@@ -2,9 +2,10 @@
 
 import { useState } from 'react'
 import type { ObservationDraft } from '@/lib/types'
-import { 
-  ROOM_AREAS, 
-  OBSERVATION_CATEGORIES, 
+import {
+  PROJECTS,
+  ROOM_AREAS,
+  OBSERVATION_CATEGORIES,
   CATEGORY_TYPES,
   HRA_CATEGORIES,
   GENERAL_CATEGORIES,
@@ -156,6 +157,20 @@ export default function ObservationReview({
               {expandedCards.has(index) && (
                 <div className="p-4 border-t border-gray-200 bg-white">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Project */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
+                      <select
+                        value={obs['Project']}
+                        onChange={(e) => updateObservation(index, 'Project', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                      >
+                        {PROJECTS.map(proj => (
+                          <option key={proj} value={proj}>{proj}</option>
+                        ))}
+                      </select>
+                    </div>
+
                     {/* Room/Area */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Room/Area</label>

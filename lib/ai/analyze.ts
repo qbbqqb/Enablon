@@ -343,6 +343,7 @@ CRITICAL: Use these inspector notes as the PRIMARY SOURCE for observations. Matc
 - ONE numbered note = ONE observation (even if multiple photos show the same issue)
 - If multiple photos relate to one numbered note, create ONE observation covering all photos
 - Use the exact location details from notes (e.g., "COLO3 CELL1", "Externals South")
+- MULTIPLE LOCATIONS: If a note mentions multiple locations (e.g., "COLO3, COLO4" or "COLO3 and COLO4"), include ALL locations in the Observation Description and use the most appropriate Room/Area field (typically "COLO or AZ" for multi-location issues)
 - Include contractor names when mentioned (e.g., "Jones Engineering", "Salboheds")
 - Use the inspector's description as the basis, don't rewrite their findings
 - Professional tone suitable for direct contractor communication${allProjects && allProjects.length > 1 ? ' Pay special attention project-specific mentions and assign observations to the correct project.' : ''}` : ''}
@@ -411,6 +412,7 @@ PROFESSIONAL WRITING REQUIREMENTS:
 - Never use: "image", "photo", "visible", "observed", "The image shows", "can be seen"
 - Write statements as facts: "Scaffolding materials stored on North Spine Road" not "Materials are observed to be stored"
 - Include specific locations from inspector notes: exact COLO areas, room numbers, contractor names
+- When multiple locations mentioned (e.g., "COLO3, COLO4"), include ALL locations in the description: "Material storage needs improvement in COLO3 and COLO4 areas"
 - Keep descriptions concise but complete - ready for immediate contractor action
 
 PHOTO-CONTEXT MATCHING ALGORITHM:
