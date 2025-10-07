@@ -1,12 +1,12 @@
 import archiver from 'archiver'
-import type { Observation, ProcessedImage, ManifestEntry, FailedItem } from '../types'
+import type { Observation, ObservationDraft, ProcessedImage, ManifestEntry, FailedItem } from '../types'
 import type { Project } from '../constants/enums'
 import { buildCSV } from '../csv/buildCsv'
 import { generatePhotoFilename, deduplicateFilename } from '../files/rename'
 
 export interface ZipContentInput {
   observations: Observation[]
-  images: Array<ProcessedImage | ProcessedImage[] | undefined>
+  images: ProcessedImage[]
   project: Project
   failed: FailedItem[]
 }
@@ -30,17 +30,9 @@ export function createZipStream(input: ZipContentInput): {
   const csvContent = buildCSV(observations)
   archive.append(Buffer.from(csvContent, 'utf8'), { name: 'observations.csv' })
   
-  // Add all photos - keep original names or use simple numbering
+  // Add all photos with their original names
   // Photos serve as visual context for the observations
-  images.forEach((entry, imageIndex) => {
-    const image: ProcessedImage | undefined = Array.isArray(entry)
-      ? entry.filter((img): img is ProcessedImage => Boolean(img))[0]
-      : entry
-
-    if (!image) {
-      return
-    }
-
+  images.forEach((image, imageIndex) => {
     // Use original filename or fallback to numbered format
     const originalBase = image.originalName.replace(/\.[^.]+$/, '')
     const extension = image.originalName.match(/\.[^.]+$/)?.[0] || '.jpg'
@@ -58,15 +50,18 @@ export function createZipStream(input: ZipContentInput): {
 
     archive.append(image.buffer, { name: `photos/${finalFilename}` })
 
-    // Link photos to observations loosely
-    const relatedObsIndex = Math.min(imageIndex, observations.length - 1)
-    const relatedObs = observations[relatedObsIndex]
+    // Find which observation(s) reference this photo (1-based index)
+    const photoNumber = imageIndex + 1
+    const relatedObs = observations.find(obs => {
+      const draft = obs as ObservationDraft
+      return draft.__photoIndices?.includes(photoNumber)
+    })
 
     manifest.push({
-      rowNumber: relatedObsIndex + 1,
+      rowNumber: relatedObs ? observations.indexOf(relatedObs) + 1 : 0,
       originalFilename: image.originalName,
       renamedFilename: finalFilename,
-      observationDescription: relatedObs?.['Observation Description'] || 'Visual context'
+      observationDescription: relatedObs?.['Observation Description'] || 'Orphaned photo - no matching observation'
     })
   })
   

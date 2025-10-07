@@ -1498,19 +1498,9 @@ export async function POST(request: NextRequest) {
         processed: observations.length,
         total: images.length
       })
-      const imagesForZip = observationImageMatches.map(match => {
-        if (match.images.length === 0) {
-          return undefined
-        }
-        if (match.images.length === 1) {
-          return match.images[0]
-        }
-        return match.images
-      })
-
       const { archive } = createZipStream({
         observations,
-        images: imagesForZip,
+        images: images,
         project: project as Project,
         failed
       })

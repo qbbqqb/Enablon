@@ -111,10 +111,13 @@ export async function POST(request: NextRequest) {
       return new Response('No processed images available for export. Please rerun the analysis.', { status: 410 })
     }
 
+    // Flatten image groups into single array
+    const allImages = exportImageGroups.flat()
+
     // Create ZIP with reviewed observations and images
     const { archive } = createZipStream({
       observations: sanitizedObservations,
-      images: exportImageGroups,
+      images: allImages,
       project: projectForZip,
       failed: sessionData.failed as FailedItem[]
     })
