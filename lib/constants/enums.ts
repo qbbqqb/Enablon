@@ -1,5 +1,5 @@
 // Project constants
-export const PROJECTS = ['GVX03', 'GVX04', 'GVX05'] as const
+export const PROJECTS = ['CAMPUS', 'GVX03', 'GVX04', 'GVX05'] as const
 export type Project = typeof PROJECTS[number]
 
 // Room/Area options
@@ -132,13 +132,17 @@ export type SeverityLevel = typeof SEVERITY_LEVELS[number]
 
 // Project-specific mappings
 export const PROJECT_MAPPINGS = {
+  CAMPUS: {
+    responsibleParty: 'alimberger B2B',
+    personNotified: 'adoyle B2B'
+  },
+  GVX03: {
+    responsibleParty: 'c-rhornton B2B',
+    personNotified: 'dviorelsilion B2B'
+  },
   GVX04: {
     responsibleParty: 'dbradbury B2B',
     personNotified: 'vferreira B2B'
-  },
-  GVX03: {
-    responsibleParty: 'nmacaodha',
-    personNotified: 'dviorelsilion B2B'
   },
   GVX05: {
     responsibleParty: 'nmacaodha',

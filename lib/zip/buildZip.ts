@@ -30,34 +30,43 @@ export function createZipStream(input: ZipContentInput): {
   const csvContent = buildCSV(observations)
   archive.append(Buffer.from(csvContent, 'utf8'), { name: 'observations.csv' })
   
-  // Add renamed photos - one observation per image (paired by index)
-  observations.forEach((obs, index) => {
-    const entry = images[index]
-    const imageList: ProcessedImage[] = Array.isArray(entry)
-      ? entry.filter((img): img is ProcessedImage => Boolean(img))
+  // Add all photos - keep original names or use simple numbering
+  // Photos serve as visual context for the observations
+  images.forEach((entry, imageIndex) => {
+    const image: ProcessedImage | undefined = Array.isArray(entry)
+      ? entry.filter((img): img is ProcessedImage => Boolean(img))[0]
       : entry
-        ? [entry]
-        : []
 
-    if (imageList.length === 0) {
+    if (!image) {
       return
     }
 
-    const obsProject = (obs.Project as Project) || project
+    // Use original filename or fallback to numbered format
+    const originalBase = image.originalName.replace(/\.[^.]+$/, '')
+    const extension = image.originalName.match(/\.[^.]+$/)?.[0] || '.jpg'
 
-    imageList.forEach((image, photoIdx) => {
-      const baseFilename = generatePhotoFilename(obsProject, index + 1, obs, photoIdx + 1)
-      const finalFilename = deduplicateFilename(baseFilename, usedFilenames)
-      usedFilenames.add(finalFilename)
+    // Clean the filename
+    const cleanBase = originalBase
+      .replace(/[^a-zA-Z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .substring(0, 50)
+      || `photo-${String(imageIndex + 1).padStart(3, '0')}`
 
-      archive.append(image.buffer, { name: `photos/${finalFilename}` })
+    const baseFilename = `${project}-${cleanBase}${extension}`
+    const finalFilename = deduplicateFilename(baseFilename, usedFilenames)
+    usedFilenames.add(finalFilename)
 
-      manifest.push({
-        rowNumber: index + 1,
-        originalFilename: image.originalName,
-        renamedFilename: finalFilename,
-        observationDescription: obs['Observation Description']
-      })
+    archive.append(image.buffer, { name: `photos/${finalFilename}` })
+
+    // Link photos to observations loosely
+    const relatedObsIndex = Math.min(imageIndex, observations.length - 1)
+    const relatedObs = observations[relatedObsIndex]
+
+    manifest.push({
+      rowNumber: relatedObsIndex + 1,
+      originalFilename: image.originalName,
+      renamedFilename: finalFilename,
+      observationDescription: relatedObs?.['Observation Description'] || 'Visual context'
     })
   })
   

@@ -30,6 +30,9 @@ export interface Observation {
 export type ObservationDraft = Observation & {
   __photoToken?: string
   __photoTokens?: string[]
+  __aiFilename?: string  // AI-generated short filename based on photo content (deprecated, use __aiFilenames)
+  __aiFilenames?: string[]  // Array of AI-generated filenames, one per photo
+  __photoIndices?: number[]  // 1-based indices of photos that belong to this observation
 }
 
 export interface ProcessedImage {

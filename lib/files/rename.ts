@@ -5,28 +5,31 @@ export function generatePhotoFilename(
   project: Project,
   obsNo: number,
   observation: Observation,
-  photoIndex: number = 1
+  photoIndex: number = 1,
+  aiGeneratedName?: string
 ): string {
-  const locationSegment = pickKeywordSegment(observation['Room/Area'], 'Site')
+  // If AI generated a short filename, use it directly
+  if (aiGeneratedName) {
+    const cleanName = aiGeneratedName
+      .replace(/[^a-zA-Z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .trim()
+      .substring(0, 60)
 
-  const issueSource =
-    observation['Observation Description'] ||
-    observation['High Risk + Significant Exposure'] ||
-    observation['General Category'] ||
-    observation['Observation Category'] ||
-    observation['Interim Corrective Actions']
+    return cleanName.endsWith('.jpg') ? cleanName : `${cleanName}.jpg`
+  }
 
-  const issueSegment = pickKeywordSegment(issueSource, 'Issue')
+  // Fallback: use observation description
+  const description = observation['Observation Description'] || 'Observation'
+  const cleanDescription = description
+    .replace(/[^a-zA-Z0-9\s-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 60)
+    .replace(/\s+/g, '-')
 
-  // Date (YYYYMMDD)
-  const dateParts = observation['Notification Date'].split('/')
-  const dateStr = `${dateParts[2]}${dateParts[1]}${dateParts[0]}` // DD/MM/YYYY -> YYYYMMDD
-
-  // Photo number for multiple photos per observation
-  const photoNum = photoIndex > 1 ? `-${photoIndex}` : ''
-
-  // Format: PROJECT-LOCATION-ISSUE-YYYYMMDD
-  return `${project}-${locationSegment}-${issueSegment}-${dateStr}${photoNum}.jpg`
+  const photoSuffix = photoIndex > 1 ? `-${photoIndex}` : ''
+  return `${cleanDescription}${photoSuffix}.jpg`
 }
 
 const STOP_WORDS = new Set([
@@ -40,6 +43,34 @@ const STOP_WORDS = new Set([
   'category',
   'positive',
   'other'
+])
+
+const ISSUE_STOP_WORDS = new Set([
+  ...STOP_WORDS,
+  'the',
+  'and',
+  'area',
+  'materials',
+  'material',
+  'hazard',
+  'equipment',
+  'people',
+  'worker',
+  'workers',
+  'poor',
+  'lack',
+  'with',
+  'without',
+  'unsafe',
+  'housekeeping',
+  'storage',
+  'site',
+  'room',
+  'near',
+  'around',
+  'located',
+  'observed',
+  'noted'
 ])
 
 function pickKeywordSegment(source: string | undefined, fallback: string): string {
@@ -74,6 +105,38 @@ function truncateSegment(segment: string, maxLength = 18): string {
     return segment
   }
   return segment.slice(0, maxLength)
+}
+
+function buildIssueSegment(source: string | undefined, fallback: string): string {
+  const tokens = (source?.match(/[A-Za-z0-9]+/g) ?? []).map(token => token.trim()).filter(Boolean)
+  if (tokens.length === 0) {
+    return fallback
+  }
+
+  const selected: string[] = []
+  const used = new Set<string>()
+
+  for (const token of tokens) {
+    const normalized = token.toLowerCase()
+    if (ISSUE_STOP_WORDS.has(normalized) || normalized.length <= 2) {
+      continue
+    }
+    if (used.has(normalized)) {
+      continue
+    }
+    used.add(normalized)
+    selected.push(truncateSegment(formatSegment(token), 12))
+    if (selected.length === 2) {
+      break
+    }
+  }
+
+  if (selected.length === 0) {
+    return fallback
+  }
+
+  const combined = selected.join('-')
+  return combined.length <= 26 ? combined : combined.slice(0, 26).replace(/-+$/, '')
 }
 
 export function deduplicateFilename(filename: string, existingFilenames: Set<string>): string {
