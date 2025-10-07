@@ -412,10 +412,11 @@ function normalizeObservation(
   // Extract photo indices from AI response
   const draft = observation as ObservationDraft
   if (Array.isArray(raw?.photo_indices)) {
-    draft.__photoIndices = raw.photo_indices
+    const extracted = raw.photo_indices
       .filter((i: unknown) => typeof i === 'number' && i >= 1)
       .map((i: number) => Math.floor(i)) // Ensure integers
-    console.log(`✓ Extracted ${draft.__photoIndices.length} photo indices:`, draft.__photoIndices)
+    draft.__photoIndices = extracted
+    console.log(`✓ Extracted ${extracted.length} photo indices:`, extracted)
   } else {
     // Debug: log what we received
     console.warn(`⚠️ No photo_indices found in AI response. Raw photo_indices:`, raw?.photo_indices)
@@ -1247,8 +1248,7 @@ export async function POST(request: NextRequest) {
 
     // Build photo contexts - when notes exist, they drive the observations
     reportProgress(sessionId, 35, 'Processing notes...', 'notes', {
-      notes: extractedNotes.length,
-      photos: images.length
+      total: images.length
     })
 
     // Simple sequential mapping: photos provide visual evidence for notes
