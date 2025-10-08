@@ -540,8 +540,11 @@ INSPECTOR NOTES:
 ${notesListText}
 
 INSTRUCTIONS:
-- Each note describes one safety observation
-- Use the photos as visual evidence to enrich the observation with specific details
+- Each note describes one safety observation at a specific location
+- PRESERVE the exact location details from the note (e.g., "COLO2 CELL1 Electrical room", "COLO3 Cell2", "Laydown area")
+- The location MUST appear at the START of your Observation Description
+- Format: "Location: Safety issue description" (e.g., "COLO2 CELL1 Electrical room: Cable damage due to equipment")
+- Use the photos as visual evidence to enrich other details (contractors, specific hazards, immediate actions)
 - For EACH observation, identify which photos show evidence of this specific issue
 - Focus on the safety issue stated in the note
 
@@ -560,7 +563,12 @@ MATCHING EXAMPLES:
 - Note mentions "COLO3" → Find photos with COLO3 signage or that area
 - Note mentions "IBC tank on pallets" → Find photos showing IBC tanks and pallet storage
 - Note mentions "worker in MEWP" → Find photos showing MEWPs with people visible
-- Note mentions "materials in corridor" → Find photos showing corridors with materials/obstructions`
+- Note mentions "materials in corridor" → Find photos showing corridors with materials/obstructions
+
+LOCATION PRESERVATION EXAMPLES:
+- Note: "GVX04 COLO2 CELL1 Electrical room - cable damage" → Description: "COLO2 CELL1 Electrical room: Cable damage creating electrical hazard"
+- Note: "GVX04 Laydown area - steel beams sliding" → Description: "Laydown area: Steel beams sliding down slope creating movement hazard"
+- Note: "GVX05 COLO3 - podium ladder unsecured" → Description: "COLO3: Podium ladder stored unsecured posing displacement risk"`
     : `PHOTO-DRIVEN WORKFLOW:
 - No inspector notes provided.
 - Create one observation per photo (${images.length} total).
@@ -583,7 +591,7 @@ Return EXACTLY ${expectedObservations} JSON objects inside a single array (no ma
 - "Room/Area": choose the closest match from: ${ROOM_AREAS.join(', ')}.
 - "Comments": use "${CONSTANTS.COMMENTS}".
 - "Observation Category": choose from ${OBSERVATION_CATEGORIES.join(' | ')}.
-- "Observation Description": A clear, professional statement of the SAFETY ISSUE or POSITIVE PRACTICE for Enablon upload. State ONLY the hazard/risk or good practice - DO NOT describe what is visible in photos (no colors, no "visible", no "a worker is", no "the equipment is"). This is a formal safety record, not a photo caption. Examples: "Uncapped rebars create impalement hazard", "Telehandler operating with deflated tire posing collision risk", "Proper use of bench and clamps for drilling operations".
+- "Observation Description": MUST start with the exact location from the inspector's note, followed by the safety issue. Format: "Location: Safety issue/practice". Examples: "COLO2 CELL1 Electrical room: Cable damage from equipment creating electrical hazard", "Laydown area: Steel beams sliding down slope", "COLO3: Proper use of PPE and safety tools". DO NOT add visual descriptions (colors, "visible", "a worker is") but you MUST include the location prefix. This is a formal safety record requiring precise location data.
 - "Responsible Party": name the specific contractor if obvious, otherwise "GC".
 - "Interim Corrective Actions": what was done immediately (or "N/A").
 - "Final Corrective Actions": plain sentence describing follow-up or close-out. Do not add OPEN/CLOSED prefixes; the system handles that.
