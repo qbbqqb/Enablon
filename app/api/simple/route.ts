@@ -46,7 +46,8 @@ function extractNotes(notes?: string): string[] {
 
   // Try numbered notes first
   const numberedMatches: string[] = []
-  const numberedRegex = /(\d+)\.\s+([^]*?)(?=\s+\d+\.\s+|$)/g
+  // Handle zero-width spaces and other special characters between number and period
+  const numberedRegex = /(\d+)[^\d]*?\.\s+([^]*?)(?=\s+\d+[^\d]*?\.\s+|$)/g
   let match: RegExpExecArray | null
 
   while ((match = numberedRegex.exec(normalized)) !== null) {
