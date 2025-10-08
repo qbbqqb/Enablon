@@ -130,12 +130,15 @@ export async function analyzeImages({
 function countNumberedNotes(notes?: string): number {
   if (!notes) return 0
 
-  // Match patterns like "1.", "2.", "3." etc. at the start of lines or after whitespace
-  const numberedMatches = notes.match(/(?:^|\n)\s*\d+\./g)
+  // Match patterns like "1.", "2.", "3." etc.
+  // Handle various whitespace characters including zero-width spaces, tabs, regular spaces
+  // Look for digit(s) followed by a period, potentially surrounded by special chars
+  const numberedMatches = notes.match(/(?:^|[\r\n])[^\d]*?(\d+)[^\d]*?\./g)
   const count = numberedMatches ? numberedMatches.length : 0
 
   console.log(`=== NOTE COUNTING DEBUG ===`)
   console.log(`Notes length: ${notes.length}`)
+  console.log(`Notes preview:`, notes.substring(0, 300))
   console.log(`Matches found:`, numberedMatches)
   console.log(`Count: ${count}`)
   console.log(`=== END NOTE COUNTING ===`)
