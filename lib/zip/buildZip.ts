@@ -16,52 +16,42 @@ export function createZipStream(input: ZipContentInput): {
   manifest: ManifestEntry[]
 } {
   const { observations, images, project, failed } = input
-  
+
   // Create archiver instance
   const archive = archiver('zip', {
     zlib: { level: 9 } // Maximum compression
   })
-  
+
   // Track filenames for deduplication
   const usedFilenames = new Set<string>()
   const manifest: ManifestEntry[] = []
-  
+
+  // Get current date for photo naming (YYYYMMDD format)
+  const now = new Date()
+  const datePrefix = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
+
   // Add CSV file
   const csvContent = buildCSV(observations)
   archive.append(Buffer.from(csvContent, 'utf8'), { name: 'observations.csv' })
   
-  // Add all photos with simple numbered names
-  // Format: {Project}-{ObsNumber}.jpg or {Project}-{ObsNumber}-{PhotoIndex}.jpg for multiple photos
+  // Add all photos with simple date-number naming
+  // Format: {YYYYMMDD}-{number}.jpg
   images.forEach((image, imageIndex) => {
     const photoNumber = imageIndex + 1
 
-    // Find which observation this photo belongs to
+    // Simple sequential numbering
+    const photoNum = String(photoNumber).padStart(3, '0')
+    const baseFilename = `${datePrefix}-${photoNum}.jpg`
+    const finalFilename = deduplicateFilename(baseFilename, usedFilenames)
+
+    usedFilenames.add(finalFilename)
+    archive.append(image.buffer, { name: `photos/${finalFilename}` })
+
+    // Find which observation this photo belongs to (for manifest)
     const relatedObs = observations.find(obs => {
       const draft = obs as ObservationDraft
       return draft.__photoIndices?.includes(photoNumber)
     })
-
-    let finalFilename: string
-
-    if (relatedObs) {
-      const obsIndex = observations.indexOf(relatedObs)
-      const obsNumber = String(obsIndex + 1).padStart(3, '0')
-      const draft = relatedObs as ObservationDraft
-
-      // Check if multiple photos for this observation
-      const photosForThisObs = draft.__photoIndices || []
-      const photoIndexInObs = photosForThisObs.indexOf(photoNumber)
-      const photoSuffix = photosForThisObs.length > 1 ? `-${photoIndexInObs + 1}` : ''
-
-      const baseFilename = `${project}-${obsNumber}${photoSuffix}.jpg`
-      finalFilename = deduplicateFilename(baseFilename, usedFilenames)
-    } else {
-      // Orphaned photo fallback
-      finalFilename = `${project}-orphaned-${String(photoNumber).padStart(3, '0')}.jpg`
-    }
-
-    usedFilenames.add(finalFilename)
-    archive.append(image.buffer, { name: `photos/${finalFilename}` })
 
     manifest.push({
       rowNumber: relatedObs ? observations.indexOf(relatedObs) + 1 : 0,
