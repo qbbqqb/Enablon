@@ -2,7 +2,7 @@ import archiver from 'archiver'
 import type { Observation, ObservationDraft, ProcessedImage, ManifestEntry, FailedItem } from '../types'
 import type { Project } from '../constants/enums'
 import { buildCSV } from '../csv/buildCsv'
-import { generatePhotoFilename, deduplicateFilename, generateSimplePhotoSlug } from '../files/rename'
+import { deduplicateFilename } from '../files/rename'
 
 export interface ZipContentInput {
   observations: Observation[]
@@ -30,8 +30,8 @@ export function createZipStream(input: ZipContentInput): {
   const csvContent = buildCSV(observations)
   archive.append(Buffer.from(csvContent, 'utf8'), { name: 'observations.csv' })
   
-  // Add all photos with descriptive names based on observations
-  // Photos serve as visual context for the observations
+  // Add all photos with simple numbered names
+  // Format: {Project}-{ObsNumber}.jpg or {Project}-{ObsNumber}-{PhotoIndex}.jpg for multiple photos
   images.forEach((image, imageIndex) => {
     const photoNumber = imageIndex + 1
 
@@ -48,15 +48,12 @@ export function createZipStream(input: ZipContentInput): {
       const obsNumber = String(obsIndex + 1).padStart(3, '0')
       const draft = relatedObs as ObservationDraft
 
-      // Generate slug from observation description
-      const slug = generateSimplePhotoSlug(relatedObs['Observation Description'])
-
       // Check if multiple photos for this observation
       const photosForThisObs = draft.__photoIndices || []
       const photoIndexInObs = photosForThisObs.indexOf(photoNumber)
       const photoSuffix = photosForThisObs.length > 1 ? `-${photoIndexInObs + 1}` : ''
 
-      const baseFilename = `${project}-${obsNumber}-${slug}${photoSuffix}.jpg`
+      const baseFilename = `${project}-${obsNumber}${photoSuffix}.jpg`
       finalFilename = deduplicateFilename(baseFilename, usedFilenames)
     } else {
       // Orphaned photo fallback
