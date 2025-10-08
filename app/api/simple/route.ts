@@ -544,7 +544,9 @@ INSTRUCTIONS:
 - PRESERVE the exact location details from the note (e.g., "COLO2 CELL1 Electrical room", "COLO3 Cell2", "Laydown area")
 - The location MUST appear at the START of your Observation Description
 - Format: "Location: Safety issue description" (e.g., "COLO2 CELL1 Electrical room: Cable damage due to equipment")
-- Use the photos as visual evidence to enrich other details (contractors, specific hazards, immediate actions)
+- Use the photos to ENRICH observations with safety-relevant details (equipment IDs, asset tags, specific hazard extent, contractor signage)
+- BUT do NOT describe what the photo looks like (colors, visual narrative like "visibly/clearly", spatial positions like "next to")
+- Ask yourself: "Does this detail help identify, track, or fix the hazard?" If no → don't include it
 - For EACH observation, identify which photos show evidence of this specific issue
 - Focus on the safety issue stated in the note
 
@@ -568,7 +570,38 @@ MATCHING EXAMPLES:
 LOCATION PRESERVATION EXAMPLES:
 - Note: "GVX04 COLO2 CELL1 Electrical room - cable damage" → Description: "COLO2 CELL1 Electrical room: Cable damage creating electrical hazard"
 - Note: "GVX04 Laydown area - steel beams sliding" → Description: "Laydown area: Steel beams sliding down slope creating movement hazard"
-- Note: "GVX05 COLO3 - podium ladder unsecured" → Description: "COLO3: Podium ladder stored unsecured posing displacement risk"`
+- Note: "GVX05 COLO3 - podium ladder unsecured" → Description: "COLO3: Podium ladder stored unsecured posing displacement risk"
+
+OBSERVATION QUALITY - Use Photos to ENRICH, Not DESCRIBE:
+
+WRONG (pure photo description):
+❌ "Extension cable damaged, creating electrical hazard. The cable is visibly flat in multiple places."
+   Problem: "visibly flat" is visual narrative, doesn't add safety value
+
+❌ "Chemical canister stored without containment. The blue canister is next to an excavator."
+   Problem: color and position don't help remediate the containment issue
+
+❌ "MEWP with expired examination. The MEWP is orange and has AMIRENT branding."
+   Problem: color is irrelevant; AMIRENT brand is useful but presented as visual description
+
+❌ "Well maintained corridor. The corridor is wide and clear with red barriers."
+   Problem: describing the scene instead of the safety practice
+
+RIGHT (enriched with safety-relevant details):
+✅ "COLO2 CELL1 Electrical room: Jones Engineering extension cable damaged in multiple locations from equipment overrun, creating electrical hazard"
+   Good: "multiple locations" from photo adds severity/extent info
+
+✅ "COLO1 CELL3 Externals South: Salboheds chemical canister stored without secondary containment, posing environmental spill hazard"
+   Good: uses note info, no irrelevant photo details
+
+✅ "COLO1 CELL4: AMIRENT MEWP with expired examination certificate (due 23.08.2025), indicating equipment maintenance non-compliance"
+   Good: brand helps identify equipment, date is actionable
+
+✅ "COLO5: Well maintained walkways with clear evacuation signage, clean floors, and stocked drinking water station"
+   Good: specific positive practices, no visual fluff
+
+✅ "Laydown area: Waste bin E16 secured with knotted strap, indicating improper lifting attachment"
+   Good: E16 enables tracking, "knotted strap" is the safety issue`
     : `PHOTO-DRIVEN WORKFLOW:
 - No inspector notes provided.
 - Create one observation per photo (${images.length} total).
@@ -591,7 +624,26 @@ Return EXACTLY ${expectedObservations} JSON objects inside a single array (no ma
 - "Room/Area": choose the closest match from: ${ROOM_AREAS.join(', ')}.
 - "Comments": use "${CONSTANTS.COMMENTS}".
 - "Observation Category": choose from ${OBSERVATION_CATEGORIES.join(' | ')}.
-- "Observation Description": MUST start with the exact location from the inspector's note, followed by the safety issue. Format: "Location: Safety issue/practice". Examples: "COLO2 CELL1 Electrical room: Cable damage from equipment creating electrical hazard", "Laydown area: Steel beams sliding down slope", "COLO3: Proper use of PPE and safety tools". DO NOT add visual descriptions (colors, "visible", "a worker is") but you MUST include the location prefix. This is a formal safety record requiring precise location data.
+- "Observation Description": Structure: "Location: Safety issue with specific details creating consequence"
+
+  START with location from note, then describe the safety issue. ENRICH with safety-relevant details from photos.
+
+  GOOD photo enrichment (adds safety value):
+  ✅ Equipment brands/models: "AMIRENT MEWP", "Kirby ladder" (helps identify specific equipment)
+  ✅ Asset tags/IDs: "E16 bin", "KE6522 ladder", "FP11 fire point" (enables tracking/follow-up)
+  ✅ Specific dates: "expired 23.08.2025" (actionable deadline)
+  ✅ Specific hazard extent: "damaged in multiple locations" (severity of issue)
+  ✅ Missing component specifics: "beacon light missing from FP11" (clear remediation)
+  ✅ Contractor names on equipment/signage (clarifies responsibility)
+
+  BAD photo description (no safety value):
+  ❌ Colors: "blue bin", "orange barrier", "red barriers", "grey gloves", "silver beams"
+  ❌ Visual narrative: "visibly flat", "clearly visible", "prominently displayed", "appears to be"
+  ❌ Spatial positions: "next to excavator", "nearby fire extinguisher", "wide corridor"
+  ❌ Aesthetic details: "black with red accents"
+  ❌ Scene descriptions: "The corridor is wide", "The area shows various materials"
+
+  Ask: "Does this detail help identify, track, or fix the hazard?" If no → exclude it.
 - "Responsible Party": name the specific contractor if obvious, otherwise "GC".
 - "Interim Corrective Actions": what was done immediately (or "N/A").
 - "Final Corrective Actions": plain sentence describing follow-up or close-out. Do not add OPEN/CLOSED prefixes; the system handles that.
