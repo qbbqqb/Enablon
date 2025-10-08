@@ -44,18 +44,30 @@ function extractNotes(notes?: string): string[] {
   // Normalize line breaks (handle \n, \\n, actual newlines)
   const normalized = notes.replace(/\\n/g, '\n')
 
-  // Try numbered notes first
+  // Try numbered notes first - simpler approach
+  // Split by lines and find lines that start with number followed by period
+  const lines = normalized.split(/\r?\n/)
   const numberedMatches: string[] = []
-  // Handle zero-width spaces and other special characters between number and period
-  const numberedRegex = /(\d+)[^\d]*?\.\s+([^]*?)(?=\s+\d+[^\d]*?\.\s+|$)/g
-  let match: RegExpExecArray | null
 
-  while ((match = numberedRegex.exec(normalized)) !== null) {
-    const content = match[2]?.trim()
-    if (content) {
-      numberedMatches.push(content)
+  console.log(`=== NOTE EXTRACTION DEBUG ===`)
+  console.log(`Total lines: ${lines.length}`)
+  console.log(`First 5 lines:`)
+  lines.slice(0, 5).forEach((line, i) => {
+    console.log(`  Line ${i}: "${line.substring(0, 100)}"`)
+  })
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    // Match lines starting with digits, any chars, then period and space
+    const match = line.match(/^(\d+)[^\d]*?\.\s*(.+)$/)
+    if (match && match[2]) {
+      const noteNumber = parseInt(match[1])
+      const noteContent = match[2].trim()
+      console.log(`  ✓ Found note ${noteNumber}: "${noteContent.substring(0, 80)}..."`)
+      numberedMatches.push(noteContent)
     }
   }
+  console.log(`=== END NOTE EXTRACTION ===`)
 
   if (numberedMatches.length > 0) {
     console.log(`Extracted ${numberedMatches.length} numbered notes from ${notes.length} chars`)
