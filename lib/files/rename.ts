@@ -189,3 +189,28 @@ export function slugFromOriginalName(name: string, maxLength: number = 40): stri
   }
   return slug || 'img'
 }
+
+// Generate simple descriptive slug from observation description for photo filenames
+export function generateSimplePhotoSlug(description: string): string {
+  // "COLO2 CELL1 Electrical room: Cable damage creating electrical hazard"
+  // → "cable-damage"
+
+  // Remove location prefix (everything before colon)
+  const content = description.includes(':')
+    ? description.split(':').slice(1).join(':').trim()
+    : description
+
+  // Extract keywords (skip common words)
+  const tokens = content
+    .toLowerCase()
+    .match(/[a-z0-9]+/g) || []
+
+  const keywords = tokens
+    .filter(token => {
+      return !ISSUE_STOP_WORDS.has(token) && token.length > 3
+    })
+    .slice(0, 4) // Max 4 keywords
+
+  const slug = keywords.join('-').substring(0, 40)
+  return slug || 'observation'
+}

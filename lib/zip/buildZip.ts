@@ -2,7 +2,7 @@ import archiver from 'archiver'
 import type { Observation, ObservationDraft, ProcessedImage, ManifestEntry, FailedItem } from '../types'
 import type { Project } from '../constants/enums'
 import { buildCSV } from '../csv/buildCsv'
-import { generatePhotoFilename, deduplicateFilename } from '../files/rename'
+import { generatePhotoFilename, deduplicateFilename, generateSimplePhotoSlug } from '../files/rename'
 
 export interface ZipContentInput {
   observations: Observation[]
@@ -30,32 +30,41 @@ export function createZipStream(input: ZipContentInput): {
   const csvContent = buildCSV(observations)
   archive.append(Buffer.from(csvContent, 'utf8'), { name: 'observations.csv' })
   
-  // Add all photos with their original names
+  // Add all photos with descriptive names based on observations
   // Photos serve as visual context for the observations
   images.forEach((image, imageIndex) => {
-    // Use original filename or fallback to numbered format
-    const originalBase = image.originalName.replace(/\.[^.]+$/, '')
-    const extension = image.originalName.match(/\.[^.]+$/)?.[0] || '.jpg'
-
-    // Clean the filename
-    const cleanBase = originalBase
-      .replace(/[^a-zA-Z0-9\s-]/g, '')
-      .replace(/\s+/g, '-')
-      .substring(0, 50)
-      || `photo-${String(imageIndex + 1).padStart(3, '0')}`
-
-    const baseFilename = `${project}-${cleanBase}${extension}`
-    const finalFilename = deduplicateFilename(baseFilename, usedFilenames)
-    usedFilenames.add(finalFilename)
-
-    archive.append(image.buffer, { name: `photos/${finalFilename}` })
-
-    // Find which observation(s) reference this photo (1-based index)
     const photoNumber = imageIndex + 1
+
+    // Find which observation this photo belongs to
     const relatedObs = observations.find(obs => {
       const draft = obs as ObservationDraft
       return draft.__photoIndices?.includes(photoNumber)
     })
+
+    let finalFilename: string
+
+    if (relatedObs) {
+      const obsIndex = observations.indexOf(relatedObs)
+      const obsNumber = String(obsIndex + 1).padStart(3, '0')
+      const draft = relatedObs as ObservationDraft
+
+      // Generate slug from observation description
+      const slug = generateSimplePhotoSlug(relatedObs['Observation Description'])
+
+      // Check if multiple photos for this observation
+      const photosForThisObs = draft.__photoIndices || []
+      const photoIndexInObs = photosForThisObs.indexOf(photoNumber)
+      const photoSuffix = photosForThisObs.length > 1 ? `-${photoIndexInObs + 1}` : ''
+
+      const baseFilename = `${project}-${obsNumber}-${slug}${photoSuffix}.jpg`
+      finalFilename = deduplicateFilename(baseFilename, usedFilenames)
+    } else {
+      // Orphaned photo fallback
+      finalFilename = `${project}-orphaned-${String(photoNumber).padStart(3, '0')}.jpg`
+    }
+
+    usedFilenames.add(finalFilename)
+    archive.append(image.buffer, { name: `photos/${finalFilename}` })
 
     manifest.push({
       rowNumber: relatedObs ? observations.indexOf(relatedObs) + 1 : 0,
