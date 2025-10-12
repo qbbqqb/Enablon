@@ -1,26 +1,27 @@
 import sharp from 'sharp'
 import { CONSTANTS } from '../constants/enums'
 import type { ProcessedImage, FailedItem } from '../types'
+import { mapWithConcurrency } from '../utils/concurrency'
+
+const NORMALIZE_CONCURRENCY = 4
+
+type NormalizationOutcome =
+  | { success: true; image: ProcessedImage }
+  | { success: false; failure: FailedItem }
 
 export async function normalizeImages(files: any[]): Promise<{
   images: ProcessedImage[]
   failed: FailedItem[]
 }> {
-  const images: ProcessedImage[] = []
-  const failed: FailedItem[] = []
+  const limit = Math.min(NORMALIZE_CONCURRENCY, Math.max(files.length, 1))
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i]
-
+  const processed = await mapWithConcurrency(files, limit, async (file, index): Promise<NormalizationOutcome> => {
     try {
-      // Convert file to buffer - handle both browser File objects and Node.js FormData entries
       let inputBuffer: Buffer
       if (file.arrayBuffer && typeof file.arrayBuffer === 'function') {
-        // Browser File object
         const arrayBuffer = await file.arrayBuffer()
         inputBuffer = Buffer.from(arrayBuffer)
       } else if (file.stream && typeof file.stream === 'function') {
-        // Node.js FormData file entry
         const chunks: Uint8Array[] = []
         const reader = file.stream().getReader()
 
@@ -30,7 +31,6 @@ export async function normalizeImages(files: any[]): Promise<{
           chunks.push(value)
         }
 
-        // Combine all chunks into a single buffer
         const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
         const combined = new Uint8Array(totalLength)
         let offset = 0
@@ -42,9 +42,8 @@ export async function normalizeImages(files: any[]): Promise<{
       } else {
         throw new Error('Unsupported file format - no arrayBuffer or stream method available')
       }
-      
-      // Process with sharp
-      let processedBuffer = await sharp(inputBuffer)
+
+      const processedBuffer = await sharp(inputBuffer)
         .jpeg({ quality: Math.round(CONSTANTS.IMAGE_QUALITY * 100) })
         .resize({
           width: CONSTANTS.IMAGE_MAX_DIMENSION,
@@ -53,61 +52,70 @@ export async function normalizeImages(files: any[]): Promise<{
           withoutEnlargement: true
         })
         .toBuffer()
-      
-      // Check if still too large after compression
+
       if (processedBuffer.length > CONSTANTS.MAX_FILE_SIZE) {
-        failed.push({
-          originalFilename: file.name || `file-${i}`,
-          reason: `File still too large after compression: ${(processedBuffer.length / 1024 / 1024).toFixed(1)}MB > 10MB`,
-          step: 'processing'
-        })
-        continue
+        return {
+          success: false,
+          failure: {
+            originalFilename: file.name || `file-${index}`,
+            reason: `File still too large after compression: ${(processedBuffer.length / 1024 / 1024).toFixed(1)}MB > 10MB`,
+            step: 'processing'
+          }
+        }
       }
 
-      images.push({
-        originalIndex: i,
-        originalName: file.name || `image-${i}.jpg`,
-        buffer: processedBuffer,
-        mimeType: 'image/jpeg'
-      })
-      
+      return {
+        success: true,
+        image: {
+          originalIndex: index,
+          originalName: file.name || `image-${index}.jpg`,
+          buffer: processedBuffer,
+          mimeType: 'image/jpeg'
+        }
+      }
     } catch (error) {
-      failed.push({
-        originalFilename: file.name || `file-${i}`,
-        reason: `Failed to process image: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        step: 'processing'
-      })
+      return {
+        success: false,
+        failure: {
+          originalFilename: file.name || `file-${index}`,
+          reason: `Failed to process image: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          step: 'processing'
+        }
+      }
     }
+  })
+
+  const images: ProcessedImage[] = []
+  const failed: FailedItem[] = []
+
+  processed.forEach(result => {
+    if (result.success) {
+      images.push(result.image)
+    } else {
+      failed.push(result.failure)
+    }
+  })
+
+  if (images.length === 0) {
+    return { images, failed }
   }
 
-  // Apply moderate compression for Railway deployment
   const totalSize = images.reduce((sum, img) => sum + img.buffer.length, 0)
-  const maxPayloadSize = 12 * 1024 * 1024 // 12MB target for Railway (premium quality)
+  const maxPayloadSize = 12 * 1024 * 1024
 
   console.log(`Initial payload: ${(totalSize / 1024 / 1024).toFixed(2)}MB with ${images.length} images`)
 
-  // Compress moderately for Railway deployment (better quality than Vercel settings)
-  for (let i = 0; i < images.length; i++) {
-    const image = images[i]
+  const compressionLimit = Math.min(NORMALIZE_CONCURRENCY, images.length)
+
+  await mapWithConcurrency(images, compressionLimit, async (image, index) => {
     const originalSize = image.buffer.length
-    const targetSize = Math.floor((maxPayloadSize / images.length) * 0.7) // Target 70% of available per image (conservative)
+    const targetSize = Math.floor((maxPayloadSize / images.length) * 0.7)
 
-    console.log(`Compressing image ${i + 1}/${images.length}: ${image.originalName} (${(originalSize / 1024).toFixed(0)}KB → target: ${(targetSize / 1024).toFixed(0)}KB)`)
-
-    // Start with high quality settings for Railway
-    let quality = 0.7
-    let dimension = 1200
-
-    // If image is already small enough, use premium quality
-    if (originalSize <= targetSize) {
-      quality = 0.85
-      dimension = 1400
-    }
-
+    let quality = originalSize <= targetSize ? 0.85 : 0.7
+    let dimension = originalSize <= targetSize ? 1400 : 1200
     let attempts = 0
-    const maxAttempts = 8
 
-    while (image.buffer.length > targetSize && attempts < maxAttempts) {
+    while (image.buffer.length > targetSize && attempts < 8) {
       try {
         const compressedBuffer = await sharp(image.buffer)
           .jpeg({
@@ -123,27 +131,21 @@ export async function normalizeImages(files: any[]): Promise<{
           })
           .toBuffer()
 
-        console.log(`  Attempt ${attempts + 1}: quality=${(quality * 100).toFixed(0)}%, dimension=${dimension}px → ${(compressedBuffer.length / 1024).toFixed(0)}KB`)
-
         image.buffer = compressedBuffer
 
         if (compressedBuffer.length <= targetSize) {
           break
         }
 
-        // More gentle reduction for better quality
         quality = Math.max(0.4, quality - 0.1)
         dimension = Math.max(800, dimension - 100)
         attempts++
-
       } catch (error) {
-        console.error(`Failed to compress image ${image.originalName || 'unknown'}:`, error)
+        console.error(`Failed to compress image ${image.originalName || `image-${index}`}:`, error)
         break
       }
     }
-
-    console.log(`  Final: ${image.originalName || 'unknown'} compressed from ${(originalSize / 1024).toFixed(0)}KB to ${(image.buffer.length / 1024).toFixed(0)}KB`)
-  }
+  })
 
   const finalTotalSize = images.reduce((sum, img) => sum + img.buffer.length, 0)
   console.log(`Final payload: ${(finalTotalSize / 1024 / 1024).toFixed(2)}MB (reduction: ${(((totalSize - finalTotalSize) / totalSize) * 100).toFixed(1)}%)`)

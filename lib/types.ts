@@ -52,7 +52,7 @@ export interface ManifestEntry {
 export interface FailedItem {
   originalFilename: string
   reason: string
-  step: 'upload' | 'processing' | 'ai_analysis' | 'schema_validation'
+  step: 'upload' | 'processing' | 'ai_analysis' | 'schema_validation' | 'photo_assignment' | 'photo_retrieval' | 'ai_enrichment'
 }
 
 export interface ProcessingResult {

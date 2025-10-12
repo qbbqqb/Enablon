@@ -32,6 +32,8 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
 
+  // Removed manual assignment - now fully automatic with multi-agent orchestrator
+
   // Cleanup EventSource on component unmount
   useEffect(() => {
     return () => {
@@ -50,7 +52,7 @@ export default function Home() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     if (files.length === 0) {
       alert('Please select at least one photo')
       return
@@ -58,13 +60,22 @@ export default function Home() {
 
     // Use detected project or default to first available project for processing
     const projectToUse = detectedProject || PROJECTS[0]
-    
+
+    setIsProcessing(true)
+    setProgress(0)
+    setProgressLabel('Processing...')
+    setProgressDetails({})
+
+    // Fully automatic workflow with multi-agent orchestrator
+    await handleAutoAnalysis(projectToUse)
+  }
+
+  // Fully automatic workflow with multi-agent orchestrator
+  const handleAutoAnalysis = async (projectToUse: Project) => {
     // Generate unique session ID
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     setSessionId(sessionId)
-    
-    setIsProcessing(true)
-    setProgress(0)
+
     setProgressLabel('Connecting to progress stream...')
     setProgressDetails({})
     
@@ -348,12 +359,11 @@ export default function Home() {
     setSessionId(null)
   }
 
-
   // Show single-project review interface if observations are ready
   if (showReview) {
     return (
       <main className="min-h-screen bg-gray-50">
-        <ObservationReview 
+        <ObservationReview
           observations={observations}
           project={detectedProject || ''}
           onSave={handleExportObservations}
@@ -442,7 +452,7 @@ export default function Home() {
                 </p>
               </div>
             </div>
-            
+
             {/* Progress Section */}
             {isProcessing && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">

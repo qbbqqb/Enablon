@@ -9,13 +9,14 @@ export interface ZipContentInput {
   images: ProcessedImage[]
   project: Project
   failed: FailedItem[]
+  photoNames?: Record<number, string> // AI-generated photo names (photoId -> name)
 }
 
 export function createZipStream(input: ZipContentInput): {
   archive: archiver.Archiver
   manifest: ManifestEntry[]
 } {
-  const { observations, images, project, failed } = input
+  const { observations, images, project, failed, photoNames } = input
 
   // Create archiver instance
   const archive = archiver('zip', {
@@ -33,24 +34,52 @@ export function createZipStream(input: ZipContentInput): {
   // Add CSV file
   const csvContent = buildCSV(observations)
   archive.append(Buffer.from(csvContent, 'utf8'), { name: 'observations.csv' })
-  
-  // Add all photos with simple date-number naming
-  // Format: {YYYYMMDD}-{number}.jpg
-  images.forEach((image, imageIndex) => {
-    const photoNumber = imageIndex + 1
 
-    // Simple sequential numbering
-    const photoNum = String(photoNumber).padStart(3, '0')
-    const baseFilename = `${datePrefix}-${photoNum}.jpg`
+  // Add all photos with AI-generated descriptive names
+  // Format: {YYYYMMDD}-{number}-{ai-generated-name}.jpg
+  images.forEach((image, imageIndex) => {
+    // CRITICAL: Use originalIndex (photoId from Agent 1) to look up the photo name,
+    // NOT imageIndex (current position in array after Agent 3B reassignment)!
+    const originalPhotoId = image.originalIndex + 1  // originalIndex is 0-based, photoId is 1-based
+    const zipSequenceNumber = imageIndex + 1  // Sequential numbering in ZIP
+
+    let baseFilename: string
+
+    // Prefer AI-generated names, fallback to original filename
+    const photoNum = String(zipSequenceNumber).padStart(3, '0')
+
+    if (photoNames && photoNames[originalPhotoId]) {
+      // Use AI-generated name based on observation content
+      const aiName = photoNames[originalPhotoId]
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '') // Remove special chars
+        .replace(/\s+/g, '-') // Spaces to dashes
+        .replace(/-+/g, '-') // Collapse multiple dashes
+        .replace(/^-|-$/g, '') // Trim dashes
+        .substring(0, 80) // Reasonable length limit
+
+      baseFilename = `${datePrefix}-${photoNum}-${aiName}.jpg`
+    } else {
+      // Fallback: use original filename (for legacy support)
+      const originalBase = image.originalName.replace(/\.[^.]+$/, '') // Remove extension
+        .replace(/[^a-zA-Z0-9_-]/g, '-') // Sanitize
+        .replace(/-+/g, '-') // Collapse multiple dashes
+        .replace(/^-|-$/g, '') // Trim dashes
+        .substring(0, 80) // Limit length
+
+      baseFilename = `${datePrefix}-${photoNum}-${originalBase}.jpg`
+    }
+
     const finalFilename = deduplicateFilename(baseFilename, usedFilenames)
 
     usedFilenames.add(finalFilename)
     archive.append(image.buffer, { name: `photos/${finalFilename}` })
 
     // Find which observation this photo belongs to (for manifest)
+    // Use originalPhotoId since __photoIndices refers to original photo IDs, not ZIP sequence
     const relatedObs = observations.find(obs => {
       const draft = obs as ObservationDraft
-      return draft.__photoIndices?.includes(photoNumber)
+      return draft.__photoIndices?.includes(originalPhotoId)
     })
 
     manifest.push({

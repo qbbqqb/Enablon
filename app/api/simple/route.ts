@@ -21,6 +21,10 @@ import { sendProgressUpdate, closeProgressConnection } from '@/lib/progress/mana
 import type { ProgressEvent } from '@/lib/progress/manager'
 import { setSessionData } from '@/lib/session/store'
 import { analyzeImages } from '@/lib/ai/analyze'
+import { extractObservationShells } from '@/lib/notes/extractShells'
+import { orchestratePhotoAssignment, generateSimplePhotoNames } from '@/lib/ai/agents'
+import { enrichObservation } from '@/lib/ai/enrich'
+import { mapWithConcurrency } from '@/lib/utils/concurrency'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -1317,6 +1321,198 @@ export async function POST(request: NextRequest) {
       console.log('First 3 notes:', extractedNotes.slice(0, 3))
     }
 
+    // NEW: Check if we should use multi-agent orchestrator for numbered notes
+    if (extractedNotes.length > 0) {
+      console.log('🎭 Using Multi-Agent Orchestrator for photo assignment')
+
+      // Extract observation shells
+      const observationShells = extractObservationShells(notes || '')
+      console.log(`Extracted ${observationShells.length} observation shells`)
+
+      if (observationShells.length > 0 && observationShells.length === extractedNotes.length) {
+        reportProgress(sessionId, 35, 'Running Multi-Agent Orchestrator...', 'orchestrator', {
+          total: images.length
+        })
+
+        // Use orchestrator to assign photos to notes
+        const { assignments, metadata } = await orchestratePhotoAssignment(images, observationShells)
+
+        reportProgress(sessionId, 55, 'Enriching observations with assigned photos...', 'enrichment', {
+          total: observationShells.length
+        })
+
+        const enrichmentResults = await mapWithConcurrency(
+          observationShells,
+          Math.min(3, observationShells.length || 1),
+          async (shell, shellIndex) => {
+            const assignedPhotoIds = assignments[shell.id] || []
+
+            if (assignedPhotoIds.length === 0) {
+              console.warn(`No photos assigned to observation #${shell.id}, skipping enrichment`)
+              return { shellIndex, observation: undefined, match: undefined, failed: undefined }
+            }
+
+            const assignedImages = assignedPhotoIds
+              .map(id => images[id - 1])
+              .filter(Boolean)
+
+            if (assignedImages.length === 0) {
+              console.warn(`Invalid photo IDs for observation #${shell.id}`)
+              return { shellIndex, observation: undefined, match: undefined, failed: undefined }
+            }
+
+            console.log(`Enriching observation #${shell.id} with ${assignedImages.length} photo(s)`)
+
+            const assignedIndices = assignedPhotoIds
+              .map(id => id - 1)
+              .filter(idx => idx >= 0 && idx < images.length)
+
+            const { observation, failed: enrichmentFailed } = await enrichObservation({
+              noteText: shell.fullNote,
+              photos: assignedImages,
+              project: project as Project,
+              observationNumber: shell.id
+            })
+
+            return {
+              shellIndex,
+              observation,
+              match: observation
+                ? {
+                    indices: assignedIndices,
+                    images: assignedImages
+                  }
+                : undefined,
+              failed: enrichmentFailed
+            }
+          }
+        )
+
+        const enrichedObservations: Observation[] = []
+        const observationImageMatches: Array<{ indices: number[]; images: ProcessedImage[] }> = []
+
+        enrichmentResults
+          .sort((a, b) => a.shellIndex - b.shellIndex)
+          .forEach(result => {
+            if (result.failed) {
+              failed.push(result.failed)
+            }
+            if (result.observation && result.match) {
+              enrichedObservations.push(result.observation)
+              observationImageMatches.push(result.match)
+            }
+          })
+
+        console.log(`✅ Orchestrator complete: ${enrichedObservations.length} observations enriched`)
+
+        reportProgress(sessionId, 75, 'Applying project rules...', 'finalization', {
+          processed: enrichedObservations.length,
+          total: observationShells.length
+        })
+
+        // Continue to export logic with enriched observations
+        const observations = enrichedObservations
+
+        if (mode === 'review') {
+          const tokenToImage: Record<string, ProcessedImage> = {}
+          const observationImageSummaries: Array<Array<{ token: string; originalIndex: number; originalName: string; mimeType: string }>> = []
+
+          const observationsWithMeta: ObservationDraft[] = observations.map((obs, i) => {
+            const imageMatch = observationImageMatches[i]
+            const { images: matchedImages } = imageMatch
+            const tokens: string[] = []
+            const summaries: Array<{ token: string; originalIndex: number; originalName: string; mimeType: string }> = []
+
+            matchedImages.forEach((image) => {
+              const token = sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
+              tokens.push(token)
+              tokenToImage[token] = image
+              summaries.push({
+                token,
+                originalIndex: image.originalIndex,
+                originalName: image.originalName,
+                mimeType: image.mimeType
+              })
+            })
+
+            observationImageSummaries.push(summaries)
+
+            return {
+              ...obs,
+              __photoToken: tokens[0],
+              __photoTokens: tokens
+            }
+          })
+
+          if (sessionId) {
+            const orderedTokens = observationImageSummaries.flatMap(summaryList => summaryList.map(summary => summary.token))
+            setSessionData(sessionId, {
+              projectFallback: project as Project,
+              failed,
+              images: tokenToImage,
+              order: orderedTokens,
+              observations: observationsWithMeta.map(({ __photoToken, __photoTokens, ...rest }) => rest),
+              photoNames: metadata.photoNames // Store AI-generated photo names
+            })
+          }
+
+          reportProgress(sessionId, 93, 'Preparing review data...', 'export', {
+            processed: observations.length,
+            total: images.length
+          })
+          reportProgress(sessionId, 100, 'Analysis complete', 'completed', {
+            processed: observations.length,
+            total: images.length
+          })
+          scheduleProgressClose(sessionId)
+
+          return new Response(JSON.stringify({
+            observations: observationsWithMeta,
+            images: observationImageSummaries,
+            failed,
+            project,
+            sessionId,
+            totalImages: images.length,
+            processedImages: observationImageSummaries.reduce((sum, imageList) => sum + imageList.length, 0)
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        } else {
+          // Return ZIP
+          console.log('Creating ZIP with AI-generated photo names...')
+          reportProgress(sessionId, 90, 'Preparing ZIP export...', 'export', {
+            processed: observations.length,
+            total: images.length
+          })
+          const { archive } = createZipStream({
+            observations,
+            images,
+            project: project as Project,
+            failed,
+            photoNames: metadata.photoNames // Use AI-generated photo names
+          })
+
+          const zipBuffer = await streamZipToBuffer(archive)
+
+          reportProgress(sessionId, 100, 'Export ready', 'completed', {
+            processed: observations.length,
+            total: images.length
+          })
+          scheduleProgressClose(sessionId)
+
+          return new Response(zipBuffer as BodyInit, {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/zip',
+              'Content-Disposition': `attachment; filename="enablon-observations-${project.toLowerCase()}-${new Date().toISOString().split('T')[0]}.zip"`,
+              'Content-Length': zipBuffer.length.toString()
+            }
+          })
+        }
+      }
+    }
+
     // Build photo contexts - when notes exist, they drive the observations
     reportProgress(sessionId, 35, 'Processing notes...', 'notes', {
       total: images.length
@@ -1565,6 +1761,17 @@ export async function POST(request: NextRequest) {
     } else {
       // Return ZIP
       console.log('Creating ZIP...')
+      reportProgress(sessionId, 85, 'Generating AI photo names...', 'naming', {
+        processed: 0,
+        total: images.length
+      })
+
+      // Generate AI photo names for better organization
+      console.log(`🎨 Calling generateSimplePhotoNames with ${images.length} images and ${observations.length} observations`)
+      const photoNames = await generateSimplePhotoNames(images, observations)
+      console.log(`🎨 Photo names result:`, photoNames)
+      console.log(`🎨 Number of photo names generated: ${Object.keys(photoNames).length}`)
+
       reportProgress(sessionId, 90, 'Preparing ZIP export...', 'export', {
         processed: observations.length,
         total: images.length
@@ -1573,7 +1780,8 @@ export async function POST(request: NextRequest) {
         observations,
         images: images,
         project: project as Project,
-        failed
+        failed,
+        photoNames
       })
 
       const zipBuffer = await streamZipToBuffer(archive)

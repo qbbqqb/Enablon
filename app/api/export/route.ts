@@ -115,11 +115,13 @@ export async function POST(request: NextRequest) {
     const allImages = exportImageGroups.flat()
 
     // Create ZIP with reviewed observations and images
+    console.log(`Using ${sessionData.photoNames ? Object.keys(sessionData.photoNames).length : 0} AI-generated photo names`)
     const { archive } = createZipStream({
       observations: sanitizedObservations,
       images: allImages,
       project: projectForZip,
-      failed: sessionData.failed as FailedItem[]
+      failed: sessionData.failed as FailedItem[],
+      photoNames: sessionData.photoNames // Use AI-generated photo names
     })
     
     // Convert archive to buffer
