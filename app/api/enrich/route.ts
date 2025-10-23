@@ -3,7 +3,7 @@ import type { Project } from '@/lib/constants/enums'
 import { getSessionData, setSessionData } from '@/lib/session/store'
 import { enrichObservation } from '@/lib/ai/enrich'
 import type { Observation, FailedItem, ProcessedImage } from '@/lib/types'
-import { detectProjectFromNotes } from '@/lib/utils/projectDetection'
+import { detectProjectFromNotes, normalizeProjectForOutput } from '@/lib/utils/projectDetection'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // 5 minutes
@@ -107,7 +107,8 @@ export async function POST(request: NextRequest) {
       })
 
       if (observation) {
-        observation['Project'] = noteProject as Project
+        const resolvedProject = normalizeProjectForOutput(noteProject as Project)
+        observation['Project'] = resolvedProject
         observations.push(observation)
       } else if (enrichFailed) {
         failed.push(enrichFailed)

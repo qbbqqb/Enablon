@@ -17,6 +17,7 @@ import {
   SEVERITY_LEVELS
 } from '../constants/enums'
 import { getStockholmDate } from '../date/stockholm'
+import { normalizeProjectForOutput } from '../utils/projectDetection'
 
 interface EnrichObservationInput {
   noteText: string
@@ -282,8 +283,10 @@ function validateAndRepairObservation(raw: any, project: Project, noteText?: str
   const projectMappings = PROJECT_MAPPINGS[project]
 
   // Start with defaults
+  const outputProject = normalizeProjectForOutput(project)
+
   const observation: Observation = {
-    'Project': project,
+    'Project': outputProject,
     'Room/Area': validateEnum(raw['Room/Area'], ROOM_AREAS, 'Other'),
     'Comments': CONSTANTS.COMMENTS,
     'Observation Category': validateEnum(raw['Observation Category'], OBSERVATION_CATEGORIES, 'New At Risk Observation'),

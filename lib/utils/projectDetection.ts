@@ -140,3 +140,7 @@ export function extractLocationFromNotes(notes: string): string[] {
   
   return [...new Set(locations)] // Remove duplicates
 }
+
+export function normalizeProjectForOutput(project: Project): Project {
+  return project === 'CAMPUS' ? 'GVX03' : project
+}

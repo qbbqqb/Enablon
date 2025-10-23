@@ -12,6 +12,7 @@ import {
   SEVERITY_LEVELS
 } from '../constants/enums'
 import { getStockholmDate } from '../date/stockholm'
+import { normalizeProjectForOutput } from '../utils/projectDetection'
 
 // Import sendProgressUpdate from progress manager
 import { sendProgressUpdate } from '../progress/manager'
@@ -546,10 +547,11 @@ function validateAndRepairObservation(raw: any, defaultProject: Project, allProj
   }
   
   const projectMappings = PROJECT_MAPPINGS[projectToUse]
+  const outputProject = normalizeProjectForOutput(projectToUse)
   
   // Start with defaults
   const observation: Observation = {
-    'Project': projectToUse,
+    'Project': outputProject,
     'Room/Area': validateEnum(raw['Room/Area'], ROOM_AREAS, 'Other'),
     'Comments': CONSTANTS.COMMENTS,
     'Observation Category': validateEnum(raw['Observation Category'], OBSERVATION_CATEGORIES, 'New At Risk Observation'),

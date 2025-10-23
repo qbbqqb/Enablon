@@ -25,7 +25,7 @@ import { extractObservationShells } from '@/lib/notes/extractShells'
 import { orchestratePhotoAssignment, generateSimplePhotoNames } from '@/lib/ai/agents'
 import { enrichObservation } from '@/lib/ai/enrich'
 import { mapWithConcurrency } from '@/lib/utils/concurrency'
-import { detectProjectFromNotes } from '@/lib/utils/projectDetection'
+import { detectProjectFromNotes, normalizeProjectForOutput } from '@/lib/utils/projectDetection'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -1378,7 +1378,8 @@ export async function POST(request: NextRequest) {
             })
 
             if (observation) {
-              observation['Project'] = noteProject
+              const resolvedProject = normalizeProjectForOutput(noteProject)
+              observation['Project'] = resolvedProject
             }
 
             return {
