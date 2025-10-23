@@ -3,6 +3,7 @@ import type { Project } from '@/lib/constants/enums'
 import { getSessionData, setSessionData } from '@/lib/session/store'
 import { enrichObservation } from '@/lib/ai/enrich'
 import type { Observation, FailedItem, ProcessedImage } from '@/lib/types'
+import { detectProjectFromNotes } from '@/lib/utils/projectDetection'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // 5 minutes
@@ -95,15 +96,18 @@ export async function POST(request: NextRequest) {
 
       console.log(`Enriching observation #${shell.id} with ${assignedPhotos.length} photo(s)`)
 
+      const noteProject = detectProjectFromNotes(shell.fullNote) || projectFallback
+
       // Call AI to enrich this observation
       const { observation, failed: enrichFailed } = await enrichObservation({
         noteText: shell.fullNote,
         photos: assignedPhotos,
-        project: projectFallback,
+        project: noteProject as Project,
         observationNumber: shell.id
       })
 
       if (observation) {
+        observation['Project'] = noteProject as Project
         observations.push(observation)
       } else if (enrichFailed) {
         failed.push(enrichFailed)

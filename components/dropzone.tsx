@@ -315,7 +315,12 @@ export default function Dropzone({
 
                       {/* Remove Button */}
                       <button
-                        onClick={() => removeFile(index)}
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          removeFile(index)
+                        }}
                         disabled={disabled}
                         className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-600 hover:text-red-700 flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
                         title="Remove photo"

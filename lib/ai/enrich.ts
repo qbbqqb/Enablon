@@ -72,7 +72,7 @@ export async function enrichObservation({
     }
 
     // Validate and repair the observation
-    const observation = validateAndRepairObservation(obsData, project)
+    const observation = validateAndRepairObservation(obsData, project, noteText)
 
     return { observation, failed: null }
 
@@ -277,7 +277,7 @@ async function callOpenRouterAPI(prompt: string, imageDataUrls: string[]): Promi
   return content
 }
 
-function validateAndRepairObservation(raw: any, project: Project): Observation {
+function validateAndRepairObservation(raw: any, project: Project, noteText?: string): Observation {
   const notificationDate = getStockholmDate()
   const projectMappings = PROJECT_MAPPINGS[project]
 
@@ -317,6 +317,8 @@ function validateAndRepairObservation(raw: any, project: Project): Observation {
     observation['High Risk + Significant Exposure'] = ''
   }
 
+  applyClosureRules(observation, noteText)
+
   return observation
 }
 
@@ -329,4 +331,49 @@ function validateEnum<T extends readonly string[]>(
     return value as T[number]
   }
   return defaultValue
+}
+
+function applyClosureRules(observation: Observation, noteText?: string) {
+  const finalText = observation['Final Corrective Actions']?.trim() || ''
+
+  if (/^closed\b/i.test(finalText)) {
+    return
+  }
+
+  const combined = `${noteText || ''} ${observation['Interim Corrective Actions'] || ''}`.toLowerCase()
+  const closurePatterns = [
+    'addressed on the spot',
+    'fixed on the spot',
+    'resolved on the spot',
+    'resolved immediately',
+    'rectified on the spot',
+    'resolved during inspection',
+    'closed during inspection',
+    'issue corrected immediately'
+  ]
+
+  const shouldClose = closurePatterns.some(pattern => combined.includes(pattern))
+  if (!shouldClose) {
+    return
+  }
+
+  let closureMessage = ''
+  if (noteText) {
+    const sentenceMatch = noteText.match(/[^.!?]*addressed on the spot[^.!?]*[.!?]?/i)
+    if (sentenceMatch?.[0]) {
+      closureMessage = sentenceMatch[0].replace(/\s+/g, ' ').trim()
+    }
+  }
+
+  if (!closureMessage && finalText) {
+    closureMessage = finalText.replace(/^open\s*-?\s*gc\s*to\s*action:\s*/i, '').trim()
+  }
+
+  if (!closureMessage) {
+    closureMessage = 'Issue addressed on the spot during inspection.'
+  }
+
+  closureMessage = closureMessage.replace(/^closed[:\s-]*/i, '').trim()
+
+  observation['Final Corrective Actions'] = `CLOSED: ${closureMessage}`
 }

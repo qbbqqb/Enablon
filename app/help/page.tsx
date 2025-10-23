@@ -86,7 +86,7 @@ export default function HelpPage() {
 
             <div className="bg-gray-50 border border-gray-200 rounded p-4">
               <h3 className="font-semibold text-gray-900 mb-2">GVX03</h3>
-              <p className="text-sm text-gray-700">Responsible: c-rhornton B2B</p>
+              <p className="text-sm text-gray-700">Responsible: c-rthornton B2B</p>
               <p className="text-sm text-gray-700">Notified: dviorelsilion B2B</p>
             </div>
 

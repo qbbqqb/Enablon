@@ -58,16 +58,12 @@ export function createZipStream(input: ZipContentInput): {
         .replace(/^-|-$/g, '') // Trim dashes
         .substring(0, 80) // Reasonable length limit
 
-      baseFilename = `${datePrefix}-${photoNum}-${aiName}.jpg`
+      baseFilename = aiName
+        ? `${datePrefix}-${photoNum}-${aiName}.jpg`
+        : `${datePrefix}-${photoNum}.jpg`
     } else {
-      // Fallback: use original filename (for legacy support)
-      const originalBase = image.originalName.replace(/\.[^.]+$/, '') // Remove extension
-        .replace(/[^a-zA-Z0-9_-]/g, '-') // Sanitize
-        .replace(/-+/g, '-') // Collapse multiple dashes
-        .replace(/^-|-$/g, '') // Trim dashes
-        .substring(0, 80) // Limit length
-
-      baseFilename = `${datePrefix}-${photoNum}-${originalBase}.jpg`
+      // Simple sequential naming when no AI-generated slug is provided
+      baseFilename = `${datePrefix}-${photoNum}.jpg`
     }
 
     const finalFilename = deduplicateFilename(baseFilename, usedFilenames)

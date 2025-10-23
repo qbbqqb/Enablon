@@ -137,7 +137,7 @@ export const PROJECT_MAPPINGS = {
     personNotified: 'adoyle B2B'
   },
   GVX03: {
-    responsibleParty: 'c-rhornton B2B',
+    responsibleParty: 'c-rthornton B2B',
     personNotified: 'dviorelsilion B2B'
   },
   GVX04: {

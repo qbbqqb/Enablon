@@ -238,251 +238,179 @@ function detectNotePattern(
   return numberedCount >= threshold ? 'numbered' : 'unnumbered'
 }
 
-// Agent 3: Matcher (Orchestrator)
-async function matchPhotosToNotes(
-  photoMetadata: PhotoMetadata[],
-  structuredNotes: StructuredNote[],
+function tokensFromText(text: string | undefined): Set<string> {
+  const tokens = new Set<string>()
+  if (!text) {
+    return tokens
+  }
+  const matches = text.toLowerCase().match(/[a-z0-9]+/g)
+  if (!matches) {
+    return tokens
+  }
+  matches.forEach(token => {
+    if (token) {
+      tokens.add(token)
+    }
+  })
+  return tokens
+}
+
+function tokensFromArray(items: string[] | undefined): Set<string> {
+  const tokens = new Set<string>()
+  if (!Array.isArray(items)) {
+    return tokens
+  }
+  items.forEach(item => {
+    tokensFromText(item).forEach(token => tokens.add(token))
+  })
+  return tokens
+}
+
+function mergeTokenSets(...sets: Array<Set<string>>): Set<string> {
+  const merged = new Set<string>()
+  sets.forEach(set => {
+    set.forEach(token => merged.add(token))
+  })
+  return merged
+}
+
+function countIntersection(a: Set<string>, b: Set<string>): number {
+  let count = 0
+  a.forEach(token => {
+    if (b.has(token)) {
+      count++
+    }
+  })
+  return count
+}
+
+function buildPhotoTokens(photo: PhotoMetadata): Set<string> {
+  const locationTokens = tokensFromText(photo.location)
+  const safetyTokens = tokensFromArray(photo.safetyIssues)
+  const equipmentTokens = tokensFromArray(photo.equipment)
+  const peopleTokens = tokensFromArray(photo.people)
+  const conditionTokens = tokensFromArray(photo.conditions)
+  return mergeTokenSets(locationTokens, safetyTokens, equipmentTokens, peopleTokens, conditionTokens)
+}
+
+function buildNoteTokens(note: StructuredNote): Set<string> {
+  const locationTokens = tokensFromText(note.location)
+  const keywordTokens = new Set(note.keywords.map(k => k.toLowerCase()))
+  const descriptionTokens = tokensFromText(note.originalText)
+  if (note.issueType) {
+    keywordTokens.add(note.issueType.toLowerCase())
+  }
+  return mergeTokenSets(locationTokens, keywordTokens, descriptionTokens)
+}
+
+function computeMatchScore(note: StructuredNote, photo: PhotoMetadata): number {
+  if (!matchesSentiment(note, photo) && photo.sentiment !== 'neutral') {
+    return Number.NEGATIVE_INFINITY
+  }
+
+  const noteTokens = buildNoteTokens(note)
+  const photoTokens = buildPhotoTokens(photo)
+  const locationOverlap = countIntersection(tokensFromText(note.location), tokensFromText(photo.location))
+  const keywordOverlap = countIntersection(noteTokens, photoTokens)
+
+  let score = 0
+
+  if (matchesSentiment(note, photo)) {
+    score += 8
+  } else if (photo.sentiment === 'neutral') {
+    score += 3
+  }
+
+  if (locationOverlap > 0) {
+    score += locationOverlap * 4
+  }
+
+  if (keywordOverlap > 0) {
+    score += Math.min(keywordOverlap, 5) * 2.5
+  }
+
+  if (note.issueType && photoTokens.has(note.issueType.toLowerCase())) {
+    score += 3
+  }
+
+  if (note.isPositive && photo.sentiment === 'good_practice') {
+    score += 2
+  }
+
+  if (!note.isPositive && photo.sentiment === 'problem') {
+    score += 2
+  }
+
+  if (photo.confidence === 'high') {
+    score += 1.5
+  } else if (photo.confidence === 'low') {
+    score -= 1
+  }
+
+  return score
+}
+
+function appendReasoning(base: string | undefined, addition: string): string {
+  if (!base) {
+    return addition
+  }
+  if (base.includes(addition)) {
+    return base
+  }
+  return `${base} ${addition}`.trim()
+}
+
+async function runSentimentBucketMatching(options: {
+  bucket: 'positive' | 'problem'
+  notes: StructuredNote[]
+  photos: PhotoMetadata[]
   apiKey: string
-): Promise<AssignmentWithReasoning[]> {
+}): Promise<AssignmentWithReasoning[]> {
+  const { bucket, notes, photos, apiKey } = options
 
-  console.log('   Detecting note pattern...')
-  const notePattern = detectNotePattern(structuredNotes, photoMetadata.length)
-  console.log(`   Note pattern detected: ${notePattern}`)
+  if (notes.length === 0) {
+    return []
+  }
 
-  // STRATEGY 1: Direct matching for numbered notes
-  if (notePattern === 'numbered') {
-    console.log('   Using DIRECT MATCHING strategy (numbered notes)')
-    const simpleAssignments: AssignmentWithReasoning[] = []
-    const assignedPhotos = new Set<number>()
+  if (photos.length === 0) {
+    return notes.map(note => ({
+      noteId: note.noteId,
+      photoIds: [],
+      reasoning: `No ${bucket === 'positive' ? 'good practice' : 'issue'} photos available for this observation`,
+      confidence: 0.2
+    }))
+  }
 
-    // Match photos 1-N to notes 1-N (one-to-one)
-    const maxSimpleMatch = Math.min(photoMetadata.length, structuredNotes.length)
+  const neutralIncluded = photos.some(photo => photo.sentiment === 'neutral')
 
-    for (let i = 0; i < maxSimpleMatch; i++) {
-      const photo = photoMetadata[i]
-      const note = structuredNotes[i]
+  const photoDetails = photos.map(photo => {
+    const safetyIssues = Array.isArray(photo.safetyIssues) ? photo.safetyIssues.join(', ') : ''
+    const equipment = Array.isArray(photo.equipment) ? photo.equipment.join(', ') : ''
+    return `Photo ${photo.photoId}:
+  Sentiment: ${photo.sentiment}
+  Location: ${photo.location || 'unknown'}
+  Safety: ${safetyIssues || 'none'}
+  Equipment: ${equipment || 'none'}`
+  }).join('\n\n')
 
-      // Check sentiment compatibility
-      const sentimentMatch =
-        photo.sentiment === 'neutral' || // Neutral can match anything
-        (photo.sentiment === 'problem' && !note.isPositive) ||
-        (photo.sentiment === 'good_practice' && note.isPositive)
+  const noteDetails = notes.map(note => {
+    const preview = note.originalText.substring(0, 180)
+    const sentimentLabel = note.isPositive ? 'POSITIVE' : 'PROBLEM'
+    return `Note ${note.noteId} [${sentimentLabel}]:
+  Location hint: ${note.location || 'unknown'}
+  Issue type: ${note.issueType}
+  Keywords: ${note.keywords.slice(0, 10).join(', ') || 'none'}
+  Text: ${preview}`
+  }).join('\n\n')
 
-      if (sentimentMatch) {
-        // Direct match: Photo N → Note N
-        simpleAssignments.push({
-          noteId: note.noteId,
-          photoIds: [photo.photoId],
-          reasoning: `Direct match: Photo ${photo.photoId} corresponds to Note ${note.noteId} (numbered notes workflow)`,
-          confidence: 0.95
-        })
-        assignedPhotos.add(photo.photoId)
-        console.log(`   Direct match: Photo ${photo.photoId} → Note ${note.noteId}`)
-      } else {
-        // Keep placeholder assignment so every note is represented (AI will re-evaluate later)
-        simpleAssignments.push({
-          noteId: note.noteId,
-          photoIds: [],
-          reasoning: `No direct match: Photo ${photo.photoId} sentiment ${photo.sentiment} vs note ${note.isPositive ? 'positive' : 'problem'} (placeholder for AI reassignment)`,
-          confidence: 0.35
-        })
-        console.warn(`   ⚠️  Sentiment mismatch: Photo ${photo.photoId} (${photo.sentiment}) ↔ Note ${note.noteId} (${note.isPositive ? 'positive' : 'problem'})`)
-      }
+  const prompt = `You are matching construction photos to observations.
 
-    }
-
-    // If all photos are assigned, return early
-    if (assignedPhotos.size === photoMetadata.length) {
-      console.log(`   ✓ All ${photoMetadata.length} photos assigned using direct matching`)
-      return simpleAssignments
-    }
-
-    // For remaining photos (excess photos beyond note count), use basic AI matching
-    const unassignedPhotos = photoMetadata.filter(p => !assignedPhotos.has(p.photoId))
-
-    if (unassignedPhotos.length === 0) {
-      console.log(`   ✓ All photos assigned using direct matching`)
-      return simpleAssignments
-    }
-
-    console.log(`   ⚠️  ${unassignedPhotos.length} excess photos need AI matching`)
-
-    const photoSummaries = unassignedPhotos.map(p =>
-      `Photo ${p.photoId}: Location="${p.location}" Sentiment=${p.sentiment} Issues=[${p.safetyIssues.join(', ')}] Equipment=[${p.equipment.join(', ')}]`
-    ).join('\n')
-
-    const noteSummaries = simpleAssignments.map(a => {
-      const note = structuredNotes.find(n => n.noteId === a.noteId)
-      const preview = note?.originalText.substring(0, 80) || 'Unknown note'
-      if (a.photoIds.length === 0) {
-        return `Note ${a.noteId}: NO PHOTO ASSIGNED - "${preview}..."`
-      }
-      return `Note ${a.noteId}: ALREADY HAS Photo ${a.photoIds.join(',')} - "${preview}..."`
-    }).join('\n')
-
-    const prompt = `${unassignedPhotos.length} excess photos need to be assigned to existing notes.
-
-UNASSIGNED PHOTOS:
-${photoSummaries}
-
-EXISTING ASSIGNMENTS:
-${noteSummaries}
-
-TASK: Assign each excess photo to ONE existing note (multiple photos can go to same note).
-
-RULES:
-1. SENTIMENT MATCHING: problem photos → problem notes, positive → positive
-2. Match by: location > issue type > keywords
-3. Multiple photos can be assigned to the same note
-4. Return JSON array with noteId, photoIds (array of photo IDs to ADD to that note)
-
-Return JSON array: [{"noteId": 1, "photoIds": [19, 20], "reasoning": "...", "confidence": 0.8}]`
-
-    console.log('   Sending request to AI matcher for excess photos...')
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 120000) // 2 minute timeout
-
-    try {
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        signal: controller.signal,
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.OPENROUTER_APP_URL || '',
-          'X-Title': process.env.OPENROUTER_APP_NAME || 'Enablon Observation Bundler'
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.2
-        })
-      })
-
-      clearTimeout(timeout)
-      console.log('   AI matcher response received')
-
-      if (!response.ok) {
-        throw new Error(`AI matcher failed: ${response.status} ${response.statusText}`)
-      }
-
-      const data = await response.json()
-      let content = data.choices[0].message.content.trim()
-
-      console.log('   Raw matcher response (first 200 chars):', content.substring(0, 200))
-
-      // Remove markdown code blocks
-      if (content.includes('```json')) {
-        content = content.replace(/^[\s\S]*```json\s*/, '').replace(/\s*```[\s\S]*$/, '')
-      } else if (content.includes('```')) {
-        content = content.replace(/^[\s\S]*```\s*/, '').replace(/\s*```[\s\S]*$/, '')
-      }
-
-      // Try to extract JSON array if AI added explanatory text
-      const jsonMatch = content.match(/\[[\s\S]*\]/)
-      if (jsonMatch) {
-        content = jsonMatch[0]
-      }
-
-      console.log('   Cleaned content (first 200 chars):', content.substring(0, 200))
-
-      let aiAssignments: AssignmentWithReasoning[] = []
-
-      try {
-        aiAssignments = JSON.parse(content)
-      } catch (parseError) {
-        console.error('   Failed to parse JSON, attempting repair...')
-        console.error('   Content:', content.substring(0, 500))
-
-        // Try jsonrepair as last resort
-        try {
-          const { jsonrepair } = await import('jsonrepair')
-          const repaired = jsonrepair(content)
-          console.log('   JSON repaired successfully')
-          aiAssignments = JSON.parse(repaired)
-        } catch (repairError) {
-          console.error('   JSON repair also failed, using fallback')
-          // Fallback: assign excess photos to first compatible note
-          aiAssignments = [{
-            noteId: simpleAssignments[0].noteId,
-            photoIds: unassignedPhotos.map(p => p.photoId),
-            reasoning: 'Fallback: AI matching failed, grouped excess photos with first note',
-            confidence: 0.3
-          }]
-        }
-      }
-
-      // Merge AI assignments with simple assignments
-      const mergedAssignments = [...simpleAssignments]
-
-      for (const aiAssignment of aiAssignments) {
-        const existing = mergedAssignments.find(a => a.noteId === aiAssignment.noteId)
-        if (existing) {
-          // Add photos to existing assignment
-          existing.photoIds.push(...aiAssignment.photoIds)
-          existing.reasoning += ` + ${aiAssignment.reasoning}`
-        } else {
-          // New assignment (shouldn't happen, but handle it)
-          mergedAssignments.push(aiAssignment)
-        }
-      }
-
-      console.log('   ✓ Merged direct matches with AI assignments')
-      return mergedAssignments
-
-    } catch (error) {
-      clearTimeout(timeout)
-      if (error instanceof Error && error.name === 'AbortError') {
-        console.error('   ❌ AI matcher timed out after 2 minutes')
-        // Return simple assignments even if AI times out
-        console.log('   ⚠️  Using direct matches only (AI timed out)')
-        return simpleAssignments
-      }
-      console.error('   ❌ AI matcher error:', error)
-      // Return simple assignments even if AI fails
-      console.log('   ⚠️  Using direct matches only (AI failed)')
-      return simpleAssignments
-    }
-  } // End of numbered notes strategy
-
-  // STRATEGY 2: Enhanced AI matching for unnumbered notes
-  console.log('   Using ENHANCED AI MATCHING strategy (unnumbered notes)')
-  console.log('   Full context: photos + notes with chain-of-thought reasoning')
-
-  // Build rich context for AI
-  const photoDetails = photoMetadata.map(p => `
-Photo ${p.photoId}:
-  Location: ${p.location}
-  Sentiment: ${p.sentiment}
-  Safety Issues: ${p.safetyIssues.join(', ') || 'none'}
-  Equipment: ${p.equipment.join(', ') || 'none'}
-  People: ${p.people.join(', ') || 'none'}
-  Conditions: ${p.conditions.join(', ') || 'none'}
-  Confidence: ${p.confidence}
-`).join('\n')
-
-  const noteDetails = structuredNotes.map(n => `
-Note ${n.noteId} [${n.isPositive ? 'POSITIVE' : 'PROBLEM'}]:
-  Text: "${n.originalText}"
-  Location: ${n.location}
-  Issue Type: ${n.issueType}
-  Keywords: ${n.keywords.slice(0, 10).join(', ')}
-`).join('\n')
-
-  const enhancedPrompt = `You are a construction safety photo matching expert. Match ${photoMetadata.length} photos to ${structuredNotes.length} observation notes.
-
-CRITICAL RULES:
-1. **SENTIMENT MUST MATCH**:
-   - Photos with sentiment="problem" can ONLY match notes marked [PROBLEM]
-   - Photos with sentiment="good_practice" can ONLY match notes marked [POSITIVE]
-   - Photos with sentiment="neutral" can match either type
-   - NEVER match a problem photo to a positive note or vice versa!
-
-2. **EACH PHOTO GOES TO EXACTLY ONE NOTE**: No duplicates, no orphans
-
-3. **MATCH BY**: First sentiment, then location, then issue type, then keywords
-
-4. **MULTIPLE PHOTOS PER NOTE**: One note can have multiple photos if they relate to the same issue
+CONTEXT:
+- This dataset only includes ${bucket === 'positive' ? 'positive (good practice)' : 'problem'} notes.
+- Photos listed below already respect sentiment (${bucket === 'positive' ? 'good practice' : 'problem'}${neutralIncluded ? ' plus some neutral documentation' : ''}).
+- Assign each photo to the BEST matching note. A note may receive multiple photos.
+- Use neutral photos only if location/keywords strongly align.
+- If you are uncertain, leave the photo unassigned.
 
 PHOTOS:
 ${photoDetails}
@@ -490,34 +418,21 @@ ${photoDetails}
 NOTES:
 ${noteDetails}
 
-STEP-BY-STEP REASONING:
-1. First, list all photos and their sentiments
-2. List all notes and their sentiments
-3. For each photo, identify compatible notes (matching sentiment)
-4. Choose the best note based on location/issue/keywords
-5. Verify all ${photoMetadata.length} photos are assigned to exactly one note
+MATCHING RULES:
+1. Do not mix sentiments.
+2. Each photo can appear at most once.
+3. Prefer matches with aligned location, issue keywords, or safety topics.
+4. Return assignments for the notes you matched. If a note stays unmatched, omit it; we'll handle it later.
 
-Return ONLY this JSON format:
+Return ONLY JSON in this format:
 [
-  {
-    "noteId": 1,
-    "photoIds": [1, 3, 5],
-    "reasoning": "Photos 1, 3, 5 all show housekeeping problems in external area matching this note about scattered materials",
-    "confidence": 0.9
-  },
-  {
-    "noteId": 2,
-    "photoIds": [2],
-    "reasoning": "Photo 2 shows cable damage matching this note about electrical issues in COLO2",
-    "confidence": 0.95
-  }
+  { "noteId": 12, "photoIds": [3], "reasoning": "Matched by location keywords", "confidence": 0.85 }
 ]
 
-Think step by step. Respect sentiment matching. Ensure all ${photoMetadata.length} photos are assigned.`
+Be concise but precise.`
 
-  console.log('   Sending enhanced AI request...')
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 180000) // 3 minutes for complex matching
+  const timeout = setTimeout(() => controller.abort(), 180000)
 
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -531,97 +446,361 @@ Think step by step. Respect sentiment matching. Ensure all ${photoMetadata.lengt
       },
       body: JSON.stringify({
         model: 'google/gemini-2.5-flash',
-        messages: [{ role: 'user', content: enhancedPrompt }],
-        temperature: 0.1 // Low temperature for consistent matching
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1
       })
     })
 
     clearTimeout(timeout)
 
     if (!response.ok) {
-      throw new Error(`Enhanced AI matcher failed: ${response.status}`)
+      throw new Error(`Bucket matcher failed with status ${response.status}`)
     }
 
     const data = await response.json()
-    let content = data.choices[0].message.content.trim()
+    let content = data.choices?.[0]?.message?.content?.trim()
 
-    // Clean and extract JSON
-    if (content.includes('```json')) {
-      content = content.replace(/^[\s\S]*```json\s*/, '').replace(/\s*```[\s\S]*$/, '')
-    } else if (content.includes('```')) {
-      content = content.replace(/^[\s\S]*```\s*/, '').replace(/\s*```[\s\S]*$/, '')
+    if (!content) {
+      throw new Error('Empty response from bucket matcher')
     }
 
-    const jsonMatch = content.match(/\[[\s\S]*\]/)
-    if (jsonMatch) {
-      content = jsonMatch[0]
+    if (content.startsWith('```json')) {
+      content = content.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+    } else if (content.startsWith('```')) {
+      content = content.replace(/^```\s*/, '').replace(/\s*```$/, '')
     }
 
-    let aiAssignments: AssignmentWithReasoning[]
+    let assignments: AssignmentWithReasoning[]
 
     try {
-      aiAssignments = JSON.parse(content)
+      assignments = JSON.parse(content)
     } catch (parseError) {
       const { jsonrepair } = await import('jsonrepair')
       const repaired = jsonrepair(content)
-      aiAssignments = JSON.parse(repaired)
+      assignments = JSON.parse(repaired)
     }
 
-    console.log(`   ✓ AI matched ${photoMetadata.length} photos to ${aiAssignments.length} notes`)
-    return aiAssignments
+    const validNoteIds = new Set(notes.map(note => note.noteId))
 
+    return assignments
+      .filter(assignment => validNoteIds.has(assignment.noteId))
+      .map(assignment => ({
+        noteId: assignment.noteId,
+        photoIds: Array.isArray(assignment.photoIds) ? assignment.photoIds : [],
+        reasoning: assignment.reasoning || 'AI bucket matching',
+        confidence: typeof assignment.confidence === 'number' ? assignment.confidence : 0.75
+      }))
   } catch (error) {
     clearTimeout(timeout)
-    console.error('   ❌ Enhanced AI matching failed:', error)
+    console.error(`   ❌ ${bucket === 'positive' ? 'Positive' : 'Problem'} bucket matching failed:`, error)
+    return notes.map(note => ({
+      noteId: note.noteId,
+      photoIds: [],
+      reasoning: 'Bucket matching unavailable, needs heuristic assignment',
+      confidence: 0.3
+    }))
+  }
+}
 
-    // Fallback: distribute photos evenly across notes based on sentiment
-    console.log('   ⚠️  Using fallback: distributing photos by sentiment')
-    const fallbackAssignments: AssignmentWithReasoning[] = []
+function selectBestPhotoForNote(
+  note: StructuredNote,
+  photoIds: Set<number>,
+  photoById: Map<number, PhotoMetadata>
+): number | undefined {
+  let bestId: number | undefined
+  let bestScore = Number.NEGATIVE_INFINITY
 
-    const problemPhotos = photoMetadata.filter(p => p.sentiment === 'problem' || p.sentiment === 'neutral')
-    const positivePhotos = photoMetadata.filter(p => p.sentiment === 'good_practice')
+  photoIds.forEach(photoId => {
+    const photo = photoById.get(photoId)
+    if (!photo) {
+      return
+    }
+    if (!matchesSentiment(note, photo) && photo.sentiment !== 'neutral') {
+      return
+    }
+    const score = computeMatchScore(note, photo)
+    if (score > bestScore) {
+      bestScore = score
+      bestId = photoId
+    }
+  })
 
-    const problemNotes = structuredNotes.filter(n => !n.isPositive)
-    const positiveNotes = structuredNotes.filter(n => n.isPositive)
+  return bestId
+}
 
-    // Distribute problem photos
-    problemPhotos.forEach((photo, idx) => {
-      const noteIdx = idx % problemNotes.length
-      const note = problemNotes[noteIdx]
-      const existing = fallbackAssignments.find(a => a.noteId === note.noteId)
-      if (existing) {
-        existing.photoIds.push(photo.photoId)
-      } else {
-        fallbackAssignments.push({
-          noteId: note.noteId,
-          photoIds: [photo.photoId],
-          reasoning: 'Fallback: Distributed by sentiment',
-          confidence: 0.4
-        })
+function applyHeuristicReassignment(
+  assignments: AssignmentWithReasoning[],
+  photoMetadata: PhotoMetadata[],
+  structuredNotes: StructuredNote[]
+): AssignmentWithReasoning[] {
+  console.log('   🔁 Running deterministic reassignment pass...')
+
+  const noteById = new Map(structuredNotes.map(note => [note.noteId, note]))
+  const photoById = new Map(photoMetadata.map(photo => [photo.photoId, photo]))
+  const sanitizedAssignments = structuredNotes.map(note => {
+    const existing = assignments.find(assignment => assignment.noteId === note.noteId)
+    const uniquePhotoIds = new Set<number>(existing?.photoIds || [])
+    const filteredPhotoIds = Array.from(uniquePhotoIds).filter(photoId => photoById.has(photoId))
+    return {
+      noteId: note.noteId,
+      photoIds: filteredPhotoIds,
+      reasoning: existing?.reasoning || 'Initialized by heuristic pass',
+      confidence: existing?.confidence ?? 0.6
+    }
+  })
+
+  const availablePhotoIds = new Set<number>()
+  photoMetadata.forEach(photo => availablePhotoIds.add(photo.photoId))
+
+  sanitizedAssignments.forEach(assignment => {
+    const note = noteById.get(assignment.noteId)
+    if (!note) {
+      return
+    }
+    assignment.photoIds = assignment.photoIds.filter(photoId => {
+      const photo = photoById.get(photoId)
+      if (!photo) {
+        return false
+      }
+      if (!matchesSentiment(note, photo) && photo.sentiment !== 'neutral') {
+        availablePhotoIds.add(photoId)
+        assignment.reasoning = appendReasoning(assignment.reasoning, `Removed photo ${photoId} (sentiment mismatch)`)
+        assignment.confidence = Math.min(assignment.confidence, 0.6)
+        return false
+      }
+      return true
+    })
+  })
+
+  const photoUsage = new Map<number, AssignmentWithReasoning[]>()
+  sanitizedAssignments.forEach(assignment => {
+    assignment.photoIds.forEach(photoId => {
+      if (!photoUsage.has(photoId)) {
+        photoUsage.set(photoId, [])
+      }
+      photoUsage.get(photoId)!.push(assignment)
+    })
+  })
+
+  photoUsage.forEach((assignmentsUsingPhoto, photoId) => {
+    if (assignmentsUsingPhoto.length <= 1) {
+      availablePhotoIds.delete(photoId)
+      return
+    }
+    const photo = photoById.get(photoId)
+    if (!photo) {
+      return
+    }
+    let keeper = assignmentsUsingPhoto[0]
+    let keeperScore = Number.NEGATIVE_INFINITY
+
+    assignmentsUsingPhoto.forEach(assignment => {
+      const note = noteById.get(assignment.noteId)
+      if (!note) {
+        return
+      }
+      const score = computeMatchScore(note, photo)
+      if (score > keeperScore) {
+        keeperScore = score
+        keeper = assignment
       }
     })
 
-    // Distribute positive photos
-    positivePhotos.forEach((photo, idx) => {
-      if (positiveNotes.length > 0) {
-        const noteIdx = idx % positiveNotes.length
-        const note = positiveNotes[noteIdx]
-        const existing = fallbackAssignments.find(a => a.noteId === note.noteId)
-        if (existing) {
-          existing.photoIds.push(photo.photoId)
-        } else {
-          fallbackAssignments.push({
+    assignmentsUsingPhoto.forEach(assignment => {
+      if (assignment === keeper) {
+        availablePhotoIds.delete(photoId)
+        return
+      }
+      assignment.photoIds = assignment.photoIds.filter(id => id !== photoId)
+      assignment.reasoning = appendReasoning(assignment.reasoning, `Removed duplicate photo ${photoId}`)
+      assignment.confidence = Math.min(assignment.confidence, 0.6)
+      availablePhotoIds.add(photoId)
+    })
+  })
+
+  sanitizedAssignments.forEach(assignment => {
+    if (assignment.photoIds.length > 0) {
+      return
+    }
+    const note = noteById.get(assignment.noteId)
+    if (!note) {
+      return
+    }
+    const bestPhotoId = selectBestPhotoForNote(note, availablePhotoIds, photoById)
+    if (bestPhotoId !== undefined) {
+      assignment.photoIds = [bestPhotoId]
+      assignment.reasoning = appendReasoning(assignment.reasoning, `Assigned photo ${bestPhotoId} via heuristic match`)
+      assignment.confidence = Math.max(assignment.confidence, 0.75)
+      availablePhotoIds.delete(bestPhotoId)
+    }
+  })
+
+  sanitizedAssignments.forEach(assignment => {
+    const note = noteById.get(assignment.noteId)
+    if (!note) {
+      return
+    }
+    assignment.photoIds = Array.from(new Set(assignment.photoIds))
+    assignment.photoIds.sort((a, b) => a - b)
+
+    const score = assignment.photoIds.reduce((total, photoId) => {
+      const photo = photoById.get(photoId)
+      if (!photo) {
+        return total
+      }
+      const matchScore = computeMatchScore(note, photo)
+      return total + Math.max(0, matchScore)
+    }, 0)
+
+    if (assignment.photoIds.length > 0 && score > 0) {
+      assignment.confidence = Math.min(0.95, Math.max(assignment.confidence, 0.7 + Math.min(score, 12) / 20))
+    }
+  })
+
+  return sanitizedAssignments
+}
+
+// Agent 3: Matcher (Orchestrator)
+async function matchPhotosToNotes(
+  photoMetadata: PhotoMetadata[],
+  structuredNotes: StructuredNote[],
+  apiKey: string
+): Promise<AssignmentWithReasoning[]> {
+  console.log('   Detecting note pattern...')
+  const notePattern = detectNotePattern(structuredNotes, photoMetadata.length)
+  console.log(`   Note pattern detected: ${notePattern}`)
+
+  const assignmentById = new Map<number, AssignmentWithReasoning>()
+  const leftoverPhotoIds = new Set<number>()
+
+  if (notePattern === 'numbered') {
+    console.log('   Using DIRECT MATCHING strategy (numbered notes)')
+    const pairCount = Math.min(photoMetadata.length, structuredNotes.length)
+
+    for (let i = 0; i < structuredNotes.length; i++) {
+      const note = structuredNotes[i]
+      const photo = i < pairCount ? photoMetadata[i] : undefined
+
+      if (photo) {
+        const sentimentMatch =
+          photo.sentiment === 'neutral' ||
+          (photo.sentiment === 'problem' && !note.isPositive) ||
+          (photo.sentiment === 'good_practice' && note.isPositive)
+
+        if (sentimentMatch) {
+          assignmentById.set(note.noteId, {
             noteId: note.noteId,
             photoIds: [photo.photoId],
-            reasoning: 'Fallback: Distributed by sentiment',
-            confidence: 0.4
+            reasoning: `Direct numbered match with photo ${photo.photoId}`,
+            confidence: 0.92
           })
+        } else {
+          assignmentById.set(note.noteId, {
+            noteId: note.noteId,
+            photoIds: [],
+            reasoning: `Skipped photo ${photo.photoId} due to sentiment mismatch`,
+            confidence: 0.45
+          })
+          leftoverPhotoIds.add(photo.photoId)
         }
+      } else {
+        assignmentById.set(note.noteId, {
+          noteId: note.noteId,
+          photoIds: [],
+          reasoning: 'No photo aligned in numbered pass',
+          confidence: 0.45
+        })
       }
-    })
+    }
 
-    return fallbackAssignments
+    for (let i = structuredNotes.length; i < photoMetadata.length; i++) {
+      leftoverPhotoIds.add(photoMetadata[i].photoId)
+    }
+  } else {
+    console.log('   Using BUCKETED AI MATCHING strategy (unnumbered notes)')
+    structuredNotes.forEach(note => {
+      assignmentById.set(note.noteId, {
+        noteId: note.noteId,
+        photoIds: [],
+        reasoning: 'Pending bucket match',
+        confidence: 0.55
+      })
+    })
+    photoMetadata.forEach(photo => leftoverPhotoIds.add(photo.photoId))
   }
+
+  const notesNeedingMatch = structuredNotes.filter(note => {
+    const assignment = assignmentById.get(note.noteId)
+    return !assignment || assignment.photoIds.length === 0
+  })
+
+  if (notesNeedingMatch.length > 0 && leftoverPhotoIds.size > 0) {
+    console.log(`   Bucket matching required for ${notesNeedingMatch.length} notes`)
+    const remainingPhotos = photoMetadata.filter(photo => leftoverPhotoIds.has(photo.photoId))
+
+    const problemNotes = notesNeedingMatch.filter(note => !note.isPositive)
+    const positiveNotes = notesNeedingMatch.filter(note => note.isPositive)
+
+    const problemPhotos = remainingPhotos.filter(photo => photo.sentiment === 'problem')
+    const positivePhotos = remainingPhotos.filter(photo => photo.sentiment === 'good_practice')
+    const neutralPhotos = remainingPhotos.filter(photo => photo.sentiment === 'neutral')
+
+    let positiveNeutralCount = 0
+    if (neutralPhotos.length > 0) {
+      const totalBucketNotes = Math.max(problemNotes.length + positiveNotes.length, 1)
+      positiveNeutralCount = Math.round((positiveNotes.length / totalBucketNotes) * neutralPhotos.length)
+      positiveNeutralCount = Math.min(positiveNeutralCount, neutralPhotos.length)
+      if (positiveNotes.length > 0 && positiveNeutralCount === 0) {
+        positiveNeutralCount = 1
+      }
+    }
+    const neutralForPositive = neutralPhotos.slice(0, positiveNeutralCount)
+    const neutralForProblem = neutralPhotos.slice(positiveNeutralCount)
+
+    const bucketAssignments: AssignmentWithReasoning[] = []
+
+    if (problemNotes.length > 0 && (problemPhotos.length > 0 || neutralForProblem.length > 0)) {
+      const results = await runSentimentBucketMatching({
+        bucket: 'problem',
+        notes: problemNotes,
+        photos: [...problemPhotos, ...neutralForProblem],
+        apiKey
+      })
+      bucketAssignments.push(...results)
+    }
+
+    if (positiveNotes.length > 0 && (positivePhotos.length > 0 || neutralForPositive.length > 0)) {
+      const results = await runSentimentBucketMatching({
+        bucket: 'positive',
+        notes: positiveNotes,
+        photos: [...positivePhotos, ...neutralForPositive],
+        apiKey
+      })
+      bucketAssignments.push(...results)
+    }
+
+    bucketAssignments.forEach(assignment => {
+      const existing = assignmentById.get(assignment.noteId)
+      if (!existing) {
+        assignmentById.set(assignment.noteId, { ...assignment })
+      } else {
+        const mergedPhotos = new Set<number>([...existing.photoIds, ...assignment.photoIds])
+        existing.photoIds = Array.from(mergedPhotos)
+        existing.reasoning = appendReasoning(existing.reasoning, assignment.reasoning || 'Bucket reassignment')
+        existing.confidence = Math.max(existing.confidence, assignment.confidence)
+      }
+      assignment.photoIds.forEach(photoId => leftoverPhotoIds.delete(photoId))
+    })
+  } else {
+    console.log('   Bucket matching skipped (no eligible notes or photos)')
+  }
+
+  const assignmentList = Array.from(assignmentById.values())
+  const refinedAssignments = applyHeuristicReassignment(assignmentList, photoMetadata, structuredNotes)
+
+  console.log(`   ✓ Deterministic pass produced ${refinedAssignments.length} assignments`)
+
+  return refinedAssignments
 }
 
 // Agent 3B: Independent Verifier (using smarter model for validation)
@@ -631,7 +810,7 @@ async function verifyAndFixAssignments(
   structuredNotes: StructuredNote[],
   apiKey: string
 ): Promise<{ assignments: AssignmentWithReasoning[]; fixed: boolean; reasoning: string }> {
-  console.log('🔍 Agent 3B: Independent verification using Claude Sonnet 4.5...')
+  console.log('🔍 Agent 3B: Independent verification using Gemini 2.5 Flash...')
 
   // First run basic validation
   const validation = validateAssignments(assignments, photoMetadata.length, structuredNotes.length)
@@ -645,7 +824,7 @@ async function verifyAndFixAssignments(
   validation.errors.forEach(e => console.log(`      ERROR: ${e}`))
   validation.warnings.forEach(w => console.log(`      WARNING: ${w}`))
 
-  // Build detailed context for Claude
+  // Build detailed context for Gemini verifier
   const photoSummaries = photoMetadata.map(p => {
     // Defensive checks for array fields (AI might not always return proper arrays)
     const safetyIssues = Array.isArray(p.safetyIssues) ? p.safetyIssues : []
@@ -743,7 +922,7 @@ Think step-by-step. Verify sentiment matching first. Ensure all ${photoMetadata.
         'X-Title': process.env.OPENROUTER_APP_NAME || 'Enablon Observation Bundler'
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4.5', // Use Claude Sonnet 4.5 for best reasoning
+        model: 'google/gemini-2.5-flash',
         messages: [{ role: 'user', content: verificationPrompt }],
         temperature: 0.1
       })
@@ -752,12 +931,17 @@ Think step-by-step. Verify sentiment matching first. Ensure all ${photoMetadata.
     clearTimeout(timeout)
 
     if (!response.ok) {
-      console.warn(`   ⚠️  Claude Sonnet 4.5 verification failed: ${response.status}, using original assignments`)
+      console.warn(`   ⚠️  Gemini verification failed: ${response.status}, using original assignments`)
       return { assignments, fixed: false, reasoning: 'Verification service unavailable' }
     }
 
     const data = await response.json()
-    let content = data.choices[0].message.content.trim()
+    let content = data.choices?.[0]?.message?.content?.trim()
+
+    if (!content) {
+      console.warn('   ⚠️  Gemini verification returned empty content, keeping original assignments')
+      return { assignments, fixed: false, reasoning: 'Empty verification response' }
+    }
 
     // Extract JSON
     if (content.includes('```json')) {
@@ -850,6 +1034,109 @@ function validateAssignments(
   }
 }
 
+function buildDeterministicSlugContext(options: {
+  photoId: number
+  metadata: PhotoMetadata
+  observation?: ObservationShell
+}): {
+  slug: string
+  locationTokens: Set<string>
+  issueTokens: Set<string>
+} {
+  const { photoId, metadata, observation } = options
+
+  const locationTokens = tokensFromText(metadata.location)
+  const noteText = observation?.fullNote || ''
+  const noteTokens = tokensFromText(noteText)
+  const generatedIssueTokens = tokensFromText(generateSimplePhotoSlug(noteText))
+  const safetyTokens = tokensFromArray(metadata.safetyIssues)
+  const equipmentTokens = tokensFromArray(metadata.equipment)
+  const conditionTokens = tokensFromArray(metadata.conditions)
+
+  const issueTokens = mergeTokenSets(generatedIssueTokens, noteTokens, safetyTokens)
+  const objectTokens = mergeTokenSets(equipmentTokens, conditionTokens)
+
+  const slugTokens: string[] = []
+  const addToken = (token: string) => {
+    const normalized = token.toLowerCase().replace(/[^a-z0-9]/g, '')
+    if (!normalized) {
+      return
+    }
+    if (!slugTokens.includes(normalized)) {
+      slugTokens.push(normalized)
+    }
+  }
+
+  Array.from(locationTokens).slice(0, 2).forEach(addToken)
+  Array.from(issueTokens).slice(0, 2).forEach(addToken)
+  Array.from(objectTokens).slice(0, 1).forEach(addToken)
+
+  const sentimentToken = metadata.sentiment === 'good_practice'
+    ? 'good'
+    : metadata.sentiment === 'problem'
+      ? 'issue'
+      : 'neutral'
+  addToken(sentimentToken)
+
+  while (slugTokens.length < 3) {
+    addToken('site')
+  }
+
+  const deterministicSlug = slugTokens.slice(0, 4).join('-') || `photo-${photoId}`
+
+  return {
+    slug: deterministicSlug,
+    locationTokens,
+    issueTokens: mergeTokenSets(issueTokens, objectTokens)
+  }
+}
+
+function deterministicSlugSuffix(base: string, photoId: number): string {
+  const seed = `${base}-${photoId}`
+  let hash = 0
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
+  }
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz'
+  const a = alphabet[hash % alphabet.length]
+  const b = alphabet[(hash >> 5) % alphabet.length]
+  const c = alphabet[(hash >> 10) % alphabet.length]
+  const numeric = (photoId * 97 % 100).toString().padStart(2, '0')
+  return `${a}${b}${c}${numeric}`
+}
+
+function applyNamingGuardrails(options: {
+  candidate: string
+  deterministic: string
+  fallback: string
+  locationTokens: Set<string>
+  issueTokens: Set<string>
+}): string {
+  const { candidate, deterministic, fallback, locationTokens, issueTokens } = options
+  const cleaned = (candidate || '').replace(/-+/g, '-').replace(/^-|-$/g, '')
+
+  const ensure = (value: string): string => value || deterministic || fallback
+
+  if (!cleaned) {
+    return ensure('')
+  }
+
+  const tokens = cleaned.split('-').filter(Boolean)
+  if (tokens.length < 3) {
+    return ensure('')
+  }
+
+  const tokenSet = new Set(tokens)
+  const hasLocation = locationTokens.size === 0 || Array.from(locationTokens).some(token => tokenSet.has(token))
+  const hasIssue = issueTokens.size === 0 || Array.from(issueTokens).some(token => tokenSet.has(token))
+
+  if (!hasLocation || !hasIssue) {
+    return ensure('')
+  }
+
+  return cleaned
+}
+
 // Agent 5: Photo Namer - generates intelligent descriptive names based on assigned observations
 async function generatePhotoNamesFromAssignments(
   photoContexts: Array<{
@@ -862,8 +1149,6 @@ async function generatePhotoNamesFromAssignments(
 ): Promise<Record<number, string>> {
   console.log('📝 Agent 5: Generating intelligent photo names based on assigned observations...')
   console.log(`   Input: ${photoContexts.length} photos with observations`)
-
-  // Log ALL assignments for debugging (not just first 3)
   console.log('\n   🔍 PHOTO-TO-OBSERVATION ASSIGNMENTS:')
   photoContexts.forEach(ctx => {
     const obsText = ctx.observation?.fullNote || 'NO OBSERVATION ASSIGNED'
@@ -871,158 +1156,205 @@ async function generatePhotoNamesFromAssignments(
   })
   console.log('')
 
-  const prompt = `You are a photo naming expert for construction safety observations.
+  const deterministicByPhoto = new Map<number, {
+    slug: string
+    locationTokens: Set<string>
+    issueTokens: Set<string>
+  }>()
 
-Your task is to create SHORT, DESCRIPTIVE filenames that capture what the observation is documenting.
+  const formatList = (items: string[] | undefined): string => {
+    if (!Array.isArray(items) || items.length === 0) {
+      return 'none'
+    }
+    return items.join(', ')
+  }
+
+  const contextBlocks = photoContexts.map(ctx => {
+    const deterministic = buildDeterministicSlugContext({
+      photoId: ctx.photoId,
+      metadata: ctx.metadata,
+      observation: ctx.observation
+    })
+    deterministicByPhoto.set(ctx.photoId, deterministic)
+
+    const obsText = ctx.observation?.fullNote || 'NO OBSERVATION ASSIGNED'
+    const safety = formatList(ctx.metadata.safetyIssues)
+    const equipment = formatList(ctx.metadata.equipment)
+    const people = formatList(ctx.metadata.people)
+    const conditions = formatList(ctx.metadata.conditions)
+
+    const locationTokens = Array.from(deterministic.locationTokens).join(', ') || 'none'
+    const issueTokens = Array.from(deterministic.issueTokens).join(', ') || 'none'
+
+    return `Photo ${ctx.photoId}:
+  Sentiment: ${ctx.metadata.sentiment}
+  Observation: "${obsText}"
+  Location: ${ctx.metadata.location || 'unknown'}
+  Safety issues: ${safety}
+  Equipment: ${equipment}
+  People: ${people}
+  Conditions: ${conditions}
+  Deterministic slug: ${deterministic.slug}
+  Location tokens: ${locationTokens}
+  Issue tokens: ${issueTokens}`
+  }).join('\n\n')
+
+  const prompt = `You generate final filenames for construction photos.
+
+For EACH photo, output a SINGLE kebab-case slug with 3-5 tokens capturing:
+- Location or area token
+- Issue or positive highlight token
+- Key object/equipment token
+Use the provided deterministic slug as a backbone. You may refine tokens for clarity, but keep them factual.
+
+STRICT RULES:
+1. Lowercase letters/numbers only, separated by hyphens.
+2. At least 3 tokens, maximum 5.
+3. Include one token from the location tokens list when possible.
+4. Include one token from the issue tokens list when possible.
+5. Avoid generic results like "photo", "positive-observation", "site" alone.
+6. Do not invent locations or issues not present in the context.
 
 PHOTO CONTEXTS:
-${photoContexts.map(ctx => {
-  const obs = ctx.observation
-  const obsPreview = obs ? obs.fullNote : 'Unassigned photo'
-  return `
-Photo ${ctx.photoId}:
-OBSERVATION TEXT: "${obsPreview}"
-`
-}).join('\n')}
+${contextBlocks}
 
-CRITICAL INSTRUCTIONS:
-1. Read each observation carefully
-2. For PROBLEM observations: Extract key words describing the issue (e.g., "cable-damage", "poor-housekeeping", "blocked-exit")
-3. For POSITIVE observations: Extract key words describing what's GOOD (e.g., "proper-ppe", "clean-walkways", "good-signage")
-4. If location is mentioned, include it (e.g., "colo2", "external-area", "laydown")
-5. Use kebab-case (lowercase with hyphens)
-6. Maximum 4-5 words
-7. NO generic names like "positive-observation" or "problem-photo"
-8. Each name must be SPECIFIC and UNIQUE
-
-EXAMPLES FOR PROBLEMS:
-✅ "Jones Engineering - Cable damage in COLO2" → "cable-damage-colo2"
-✅ "Poor housekeeping in laydown area" → "poor-housekeeping-laydown"
-✅ "Fire exit blocked by equipment" → "blocked-fire-exit"
-✅ "Missing hard hats in zone 3" → "missing-hard-hats-zone3"
-
-EXAMPLES FOR POSITIVE OBSERVATIONS:
-✅ "Positive - Proper PPE usage by workers" → "proper-ppe-usage"
-✅ "Well maintained walkways and signage" → "clean-walkways-signage"
-✅ "Good cutting station with fire extinguisher" → "good-cutting-station"
-✅ "Mobile office with safety boards" → "mobile-office-safety-boards"
-✅ "Compliant gloves and knife usage" → "compliant-gloves-knife"
-
-❌ WRONG: "positive-observation" (too generic!)
-❌ WRONG: "construction-site" (too vague)
-❌ WRONG: "photo-1" (not descriptive)
-
-Return ONLY this JSON format:
+Return ONLY JSON:
 [
-  {
-    "photoId": 1,
-    "suggestedName": "cable-damage-colo2",
-    "reasoning": "Describes cable damage issue in COLO2 electrical room"
-  },
-  {
-    "photoId": 2,
-    "suggestedName": "proper-ppe-usage",
-    "reasoning": "Positive observation about compliant PPE usage"
-  }
-]
+  {"photoId": 3, "suggestedName": "colo3-trip-hazard-cable", "reasoning": "Uses location, issue, object tokens"}
+]`
 
-BE SPECIFIC. NO GENERIC NAMES. Each name must clearly identify what the photo shows.`
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 180000)
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': process.env.OPENROUTER_APP_URL || '',
-      'X-Title': process.env.OPENROUTER_APP_NAME || 'Enablon Observation Bundler'
-    },
-    body: JSON.stringify({
-      model: 'google/gemini-2.5-flash',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3
-    })
-  })
+  let suggestions: PhotoNameSuggestion[]
 
-  const data = await response.json()
-  let content = data.choices[0].message.content.trim()
-
-  if (content.startsWith('```json')) {
-    content = content.replace(/^```json\s*/, '').replace(/\s*```$/, '')
-  } else if (content.startsWith('```')) {
-    content = content.replace(/^```\s*/, '').replace(/\s*```$/, '')
-  }
-
-  let suggestions: PhotoNameSuggestion[] = JSON.parse(content)
-
-  console.log(`\n✅ Generated ${suggestions.length} photo names based on assigned observations\n`)
-
-  // VALIDATION: Check for generic or poor quality names
-  const genericNames = ['positive-observation', 'problem-photo', 'observation', 'photo', 'construction-site', 'site-photo']
-  const problematicNames: { photoId: number; name: string; reason: string }[] = []
-
-  suggestions.forEach(s => {
-    // Check if name is too generic
-    if (genericNames.includes(s.suggestedName.toLowerCase())) {
-      problematicNames.push({
-        photoId: s.photoId,
-        name: s.suggestedName,
-        reason: `Generic name "${s.suggestedName}" - not descriptive enough`
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      signal: controller.signal,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.OPENROUTER_APP_URL || '',
+        'X-Title': process.env.OPENROUTER_APP_NAME || 'Enablon Observation Bundler'
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2
       })
-    }
-
-    // Check if name is too short (less than 2 words)
-    const wordCount = s.suggestedName.split('-').length
-    if (wordCount < 2) {
-      problematicNames.push({
-        photoId: s.photoId,
-        name: s.suggestedName,
-        reason: `Too short: "${s.suggestedName}" (${wordCount} word) - needs more detail`
-      })
-    }
-  })
-
-  // If validation fails, retry ONCE with feedback
-  if (problematicNames.length > 0) {
-    console.warn(`\n⚠️  Validation failed: ${problematicNames.length} names need improvement`)
-    problematicNames.forEach(p => {
-      console.warn(`   - Photo ${p.photoId}: ${p.reason}`)
     })
 
-    console.log('\n🔄 Retrying Agent 5 with specific feedback...')
+    clearTimeout(timeout)
 
-    const retryPrompt = `Your previous photo names had issues. Please fix ONLY these photos:
+    if (!response.ok) {
+      throw new Error(`Gemini naming request failed: ${response.status}`)
+    }
 
-${problematicNames.map(p => {
-  const ctx = photoContexts.find(c => c.photoId === p.photoId)
-  const obs = ctx?.observation
-  return `
-Photo ${p.photoId}:
-  Previous name: "${p.name}"
-  Problem: ${p.reason}
-  Observation: "${obs?.fullNote || 'No observation'}"
+    const data = await response.json()
+    let content = data.choices?.[0]?.message?.content?.trim()
 
-  Requirements:
-  - Must be SPECIFIC (not generic like "positive-observation")
-  - Must be DESCRIPTIVE (describe WHAT is shown)
-  - Must have at least 2-3 words
-  - Use kebab-case
+    if (!content) {
+      throw new Error('Empty naming response from Gemini')
+    }
 
-  Examples of GOOD names:
-  - For positive observations: "proper-ppe-gloves", "clean-walkways-signage", "mobile-office-boards"
-  - For problems: "cable-damage-colo2", "poor-housekeeping-laydown", "unsecured-ladder"
-`
-}).join('\n')}
+    if (content.startsWith('```json')) {
+      content = content.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+    } else if (content.startsWith('```')) {
+      content = content.replace(/^```\s*/, '').replace(/\s*```$/, '')
+    }
 
-Return ONLY JSON array with improved names for these ${problematicNames.length} photos:
-[
-  {
-    "photoId": 3,
-    "suggestedName": "proper-signage-mixing-station",
-    "reasoning": "Describes the positive observation about proper signage in DVS mixing station"
+    try {
+      suggestions = JSON.parse(content)
+    } catch (parseError) {
+      const { jsonrepair } = await import('jsonrepair')
+      const repaired = jsonrepair(content)
+      suggestions = JSON.parse(repaired)
+    }
+  } catch (error) {
+    clearTimeout(timeout)
+    console.error('❌ Failed to generate photo names:', error)
+    return {}
   }
-]
 
-BE SPECIFIC. NO GENERIC NAMES.`
+  console.log(`
+✅ Generated ${suggestions.length} photo name suggestions
+`)
+
+  const genericNames = new Set([
+    'positive-observation',
+    'problem-photo',
+    'observation',
+    'photo',
+    'construction-site',
+    'site-photo',
+    'site-observation',
+    'good-practice',
+    'issue'
+  ])
+
+  const issuesByPhoto = new Map<number, { name: string; reasons: string[] }>()
+
+  suggestions.forEach(suggestion => {
+    const normalized = suggestion.suggestedName.toLowerCase()
+    const tokens = normalized.split('-').filter(Boolean)
+
+    const entry = issuesByPhoto.get(suggestion.photoId) ?? { name: suggestion.suggestedName, reasons: [] }
+
+    if (tokens.length < 3) {
+      entry.reasons.push('Needs at least three tokens (location, issue, object)')
+    }
+
+    if (genericNames.has(normalized)) {
+      entry.reasons.push('Name is too generic')
+    }
+
+    const deterministic = deterministicByPhoto.get(suggestion.photoId)
+    if (deterministic) {
+      const tokenSet = new Set(tokens)
+      const hasLocation = deterministic.locationTokens.size === 0 || Array.from(deterministic.locationTokens).some(token => tokenSet.has(token))
+      const hasIssue = deterministic.issueTokens.size === 0 || Array.from(deterministic.issueTokens).some(token => tokenSet.has(token))
+
+      if (!hasLocation) {
+        entry.reasons.push('Missing any location token from the provided list')
+      }
+      if (!hasIssue) {
+        entry.reasons.push('Missing any issue token from the provided list')
+      }
+    }
+
+    if (entry.reasons.length > 0) {
+      issuesByPhoto.set(suggestion.photoId, entry)
+    }
+  })
+
+  const problematic = Array.from(issuesByPhoto.entries())
+  if (problematic.length > 0) {
+    console.warn(`
+⚠️  Naming validation detected ${problematic.length} items to fix`)
+
+    const retryPrompt = `Some of your filenames missed required constraints. Rewrite ONLY the problematic entries below.
+Each output MUST follow:
+- 3-5 tokens in kebab-case
+- Include at least one provided location token
+- Include at least one provided issue token
+- Keep details factual
+
+${problematic.map(([photoId, info]) => {
+  const deterministic = deterministicByPhoto.get(photoId)!
+  const locationTokens = Array.from(deterministic.locationTokens).join(', ') || 'none'
+  const issueTokens = Array.from(deterministic.issueTokens).join(', ') || 'none'
+  const reasons = info.reasons.map(r => `    - ${r}`).join('\n')
+  return `Photo ${photoId}:
+  Previous name: "${info.name}"
+  Deterministic slug: ${deterministic.slug}
+  Location tokens: ${locationTokens}
+  Issue tokens: ${issueTokens}
+  Problems:
+${reasons}`
+}).join('\n\n')}
+
+Return ONLY JSON array of fixes: [{"photoId": 4, "suggestedName": "...", "reasoning": "..."}]`
 
     try {
       const retryResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -1036,50 +1368,50 @@ BE SPECIFIC. NO GENERIC NAMES.`
         body: JSON.stringify({
           model: 'google/gemini-2.5-flash',
           messages: [{ role: 'user', content: retryPrompt }],
-          temperature: 0.3
+          temperature: 0.2
         })
       })
 
       if (retryResponse.ok) {
         const retryData = await retryResponse.json()
-        let retryContent = retryData.choices[0].message.content.trim()
+        let retryContent = retryData.choices?.[0]?.message?.content?.trim()
 
-        if (retryContent.startsWith('```json')) {
-          retryContent = retryContent.replace(/^```json\s*/, '').replace(/\s*```$/, '')
-        } else if (retryContent.startsWith('```')) {
-          retryContent = retryContent.replace(/^```\s*/, '').replace(/\s*```$/, '')
-        }
-
-        const improvedSuggestions: PhotoNameSuggestion[] = JSON.parse(retryContent)
-
-        // Merge improved suggestions back into original
-        improvedSuggestions.forEach(improved => {
-          const idx = suggestions.findIndex(s => s.photoId === improved.photoId)
-          if (idx !== -1) {
-            suggestions[idx] = improved
-            console.log(`   ✓ Improved Photo ${improved.photoId}: "${improved.suggestedName}"`)
+        if (retryContent) {
+          if (retryContent.startsWith('```json')) {
+            retryContent = retryContent.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+          } else if (retryContent.startsWith('```')) {
+            retryContent = retryContent.replace(/^```\s*/, '').replace(/\s*```$/, '')
           }
-        })
 
-        console.log(`\n✅ Retry successful: improved ${improvedSuggestions.length} names`)
+          try {
+            const improved: PhotoNameSuggestion[] = JSON.parse(retryContent)
+            improved.forEach(update => {
+              const index = suggestions.findIndex(s => s.photoId === update.photoId)
+              if (index !== -1) {
+                suggestions[index] = update
+                console.log(`   ✓ Updated Photo ${update.photoId}: "${update.suggestedName}"`)
+              }
+            })
+          } catch (retryParseError) {
+            console.warn('Retry response parse failed:', retryParseError)
+          }
+        }
       }
     } catch (retryError) {
-      console.error('⚠️  Retry failed, using original names:', retryError)
+      console.error('⚠️  Naming retry failed:', retryError)
     }
   }
 
-  // Log ALL final suggestions with their observation context for verification
   console.log('\n   📋 FINAL GENERATED NAMES:')
   suggestions.forEach(s => {
     const ctx = photoContexts.find(c => c.photoId === s.photoId)
     const obsText = ctx?.observation?.fullNote || 'No observation'
-    console.log(`\n   Photo ${s.photoId}: "${s.suggestedName}"`)
+    console.log(`   Photo ${s.photoId}: "${s.suggestedName}"`)
     console.log(`      Observation: "${obsText.substring(0, 100)}..."`)
     console.log(`      AI Reasoning: ${s.reasoning}`)
   })
   console.log('')
 
-  // Convert to Record format
   const photoNames: Record<number, string> = {}
   const lightweightImages: ProcessedImage[] = photoContexts.map(ctx => {
     const sourceImage = images[ctx.photoId - 1]
@@ -1109,10 +1441,10 @@ BE SPECIFIC. NO GENERIC NAMES.`
   return sanitizeAndAssignPhotoNames({
     images: lightweightImages,
     observations: observationDrafts,
-    suggestions: sanitizedSuggestions
+    suggestions: sanitizedSuggestions,
+    deterministicMap: deterministicByPhoto
   })
 }
-
 // Standalone photo namer - works without orchestrator
 export async function generateSimplePhotoNames(
   images: ProcessedImage[],
@@ -1274,28 +1606,34 @@ function sanitizeAndAssignPhotoNames(options: {
   images: ProcessedImage[]
   observations: any[]
   suggestions: Array<{ photoId: number; suggestedName: string }>
+  deterministicMap?: Map<number, { slug: string; locationTokens: Set<string>; issueTokens: Set<string> }>
 }): Record<number, string> {
-  const { images, observations, suggestions } = options
+  const { images, observations, suggestions, deterministicMap } = options
 
   const suggestionMap = new Map<number, string>()
   const usedSlugs = new Set<string>()
   const photoNames: Record<number, string> = {}
 
-  for (const suggestion of suggestions) {
+  suggestions.forEach(suggestion => {
     const photoId = Number(suggestion.photoId)
     if (!Number.isInteger(photoId) || photoId < 1 || photoId > images.length) {
-      continue
+      return
     }
 
     const sanitized = sanitizeSuggestedSlug(suggestion.suggestedName)
     if (sanitized) {
       suggestionMap.set(photoId, sanitized)
     }
-  }
+  })
 
   images.forEach((image, index) => {
     const photoId = index + 1
     const observation = observations[index]
+
+    const deterministic = deterministicMap?.get(photoId)
+    const deterministicSlug = deterministic?.slug ? sanitizeSuggestedSlug(deterministic.slug) : ''
+    const locationTokens = deterministic?.locationTokens ?? new Set<string>()
+    const issueTokens = deterministic?.issueTokens ?? new Set<string>()
 
     const observationDescription = typeof observation?.['Observation Description'] === 'string'
       ? observation['Observation Description']
@@ -1306,32 +1644,41 @@ function sanitizeAndAssignPhotoNames(options: {
       : ''
 
     const fallbackCandidates = [
-      fallbackFromObservation,
-      observationDescription,
-      slugFromOriginalName(image.originalName),
-      `photo-${photoId}`
-    ]
-      .map(candidate => sanitizeSuggestedSlug(candidate))
-      .filter(Boolean)
+      deterministicSlug,
+      sanitizeSuggestedSlug(fallbackFromObservation),
+      sanitizeSuggestedSlug(observationDescription),
+      sanitizeSuggestedSlug(slugFromOriginalName(image.originalName)),
+      sanitizeSuggestedSlug(`photo-${photoId}`)
+    ].filter(Boolean)
 
-    let fallbackSlug = fallbackCandidates.find(slug => wordCount(slug) >= 2)
+    let fallbackSlug = fallbackCandidates.find(slug => wordCount(slug) >= 3)
+      || fallbackCandidates.find(slug => wordCount(slug) >= 2)
       || fallbackCandidates[0]
-      || sanitizeSuggestedSlug(`photo-${photoId}`)
       || `photo-${photoId}`
 
-    if (wordCount(fallbackSlug) < 2) {
+    if (wordCount(fallbackSlug) < 3) {
       fallbackSlug = sanitizeSuggestedSlug(`photo-${photoId}`) || `photo-${photoId}`
     }
 
     const preferredSlug = suggestionMap.get(photoId)
-    const candidate = preferredSlug || fallbackSlug
+    const candidateInput = preferredSlug || deterministicSlug || fallbackSlug
+
+    const guardedSlug = applyNamingGuardrails({
+      candidate: candidateInput,
+      deterministic: deterministicSlug || fallbackSlug,
+      fallback: fallbackSlug,
+      locationTokens,
+      issueTokens
+    })
 
     const finalSlug = dedupeSlug(
-      enforceSlugRules(candidate, fallbackSlug),
+      guardedSlug,
       usedSlugs,
       fallbackCandidates,
-      photoId
+      photoId,
+      deterministic ? deterministicSlugSuffix(deterministic.slug, photoId) : undefined
     )
+
     photoNames[photoId] = finalSlug
   })
 
@@ -1369,21 +1716,13 @@ function sanitizeSuggestedSlug(raw: string | undefined): string {
   return slug
 }
 
-function enforceSlugRules(candidate: string, fallback: string): string {
-  const cleaned = (candidate || '').replace(/-+/g, '-').replace(/^-|-$/g, '')
-
-  if (!cleaned) {
-    return fallback
-  }
-
-  if (wordCount(cleaned) < 2) {
-    return fallback
-  }
-
-  return cleaned
-}
-
-function dedupeSlug(base: string, used: Set<string>, extras: string[], photoId: number): string {
+function dedupeSlug(
+  base: string,
+  used: Set<string>,
+  extras: string[],
+  photoId: number,
+  deterministicSuffix?: string
+): string {
   const limitedBase = limitSlug(base)
 
   if (!used.has(limitedBase)) {
@@ -1411,6 +1750,14 @@ function dedupeSlug(base: string, used: Set<string>, extras: string[], photoId: 
 
   for (const token of extraTokens) {
     const attempt = limitSlug(`${limitedBase}-${token}`)
+    if (!used.has(attempt)) {
+      used.add(attempt)
+      return attempt
+    }
+  }
+
+  if (deterministicSuffix) {
+    const attempt = limitSlug(`${limitedBase}-${deterministicSuffix}`)
     if (!used.has(attempt)) {
       used.add(attempt)
       return attempt
@@ -1494,7 +1841,7 @@ export async function orchestratePhotoAssignment(
   let validation = validateAssignments(assignmentsWithReasoning, images.length, observationShells.length)
 
   if (!validation.valid || validation.warnings.length > 0) {
-    // Step 3B: Independent verification (uses Claude Sonnet 4.5 for superior reasoning)
+    // Step 3B: Independent verification (uses Gemini 2.5 Flash for reasoning)
     console.log('🔍 Step 3B: Independent verification...')
     const verificationResult = await verifyAndFixAssignments(
       assignmentsWithReasoning,
@@ -1520,19 +1867,65 @@ export async function orchestratePhotoAssignment(
     console.warn('⚠️  Validation issues detected, applying fallback strategy:')
     validation.errors.forEach(e => console.warn(`   - ${e}`))
 
-    // Fallback: Fix missing assignments and orphaned photos
+    // Fallback: Fix missing assignments, duplicates, and orphaned photos
+    const noteById = new Map(structuredNotes.map(note => [note.noteId, note]))
+
+    const orphanedPhotosSet = new Set<number>()
+
+    const assignmentBuckets = new Map<number, AssignmentWithReasoning[]>()
+    assignmentsWithReasoning.forEach(assignment => {
+      assignment.photoIds.forEach(pid => {
+        if (!assignmentBuckets.has(pid)) {
+          assignmentBuckets.set(pid, [])
+        }
+        assignmentBuckets.get(pid)!.push(assignment)
+      })
+    })
+
+    assignmentBuckets.forEach((list, photoId) => {
+      if (list.length <= 1) {
+        return
+      }
+
+      const photo = photoMetadata.find(p => p.photoId === photoId)
+      let keeper = list[0]
+      if (photo) {
+        const sentimentMatch = list.find(assignment => {
+          const note = noteById.get(assignment.noteId)
+          return matchesSentiment(note, photo)
+        })
+        if (sentimentMatch) {
+          keeper = sentimentMatch
+        } else {
+          keeper = list.reduce((best, current) =>
+            current.confidence > best.confidence ? current : best
+          )
+        }
+      }
+
+      list.forEach(assignment => {
+        if (assignment === keeper) {
+          return
+        }
+        assignment.photoIds = assignment.photoIds.filter(id => id !== photoId)
+        assignment.reasoning += ` (Fallback: Removed duplicate photo ${photoId})`
+        assignment.confidence = Math.min(assignment.confidence, 0.6)
+        orphanedPhotosSet.add(photoId)
+      })
+    })
+
     const assignedPhotos = new Set<number>()
     assignmentsWithReasoning.forEach(a => {
       a.photoIds.forEach(pid => assignedPhotos.add(pid))
     })
 
-    // Find orphaned photos (not assigned to any note)
-    const orphanedPhotos: number[] = []
     for (let i = 1; i <= images.length; i++) {
       if (!assignedPhotos.has(i)) {
-        orphanedPhotos.push(i)
+        orphanedPhotosSet.add(i)
       }
     }
+
+    const orphanedPhotos = Array.from(orphanedPhotosSet)
 
     // Find notes without photos
     const notesWithoutPhotos = assignmentsWithReasoning
@@ -1566,13 +1959,25 @@ export async function orchestratePhotoAssignment(
         console.log(`   Note ${lastAssignment.noteId} ← Photos [${remainingPhotos.join(', ')}] (fallback)`)
       }
     } else if (orphanedPhotos.length > 0) {
-      // No notes without photos, add orphaned photos to existing assignments
+      // No notes without photos, add orphaned photos to existing assignments respecting sentiment
       console.log('🔧 Fallback: Distributing orphaned photos to existing assignments')
-      orphanedPhotos.forEach((photoId, idx) => {
-        const targetAssignment = assignmentsWithReasoning[idx % assignmentsWithReasoning.length]
-        targetAssignment.photoIds.push(photoId)
-        targetAssignment.reasoning += ` (Fallback: Added orphaned photo ${photoId})`
-        console.log(`   Note ${targetAssignment.noteId} ← Photo ${photoId} (fallback)`)
+      orphanedPhotos.forEach(photoId => {
+        const photo = photoMetadata.find(p => p.photoId === photoId)
+        let target: AssignmentWithReasoning | undefined
+        if (photo) {
+          const preferred = assignmentsWithReasoning.find(a => {
+            const note = noteById.get(a.noteId)
+            return matchesSentiment(note, photo)
+          })
+          target = preferred || assignmentsWithReasoning[0]
+        } else {
+          target = assignmentsWithReasoning[0]
+        }
+
+        target.photoIds.push(photoId)
+        target.reasoning += ` (Fallback: Added orphaned photo ${photoId})`
+        target.confidence = Math.min(target.confidence, 0.6)
+        console.log(`   Note ${target.noteId} ← Photo ${photoId} (fallback)`)
       })
     } else if (notesWithoutPhotos.length > 0) {
       // No orphaned photos, assign the first photo to notes without photos
@@ -1641,4 +2046,17 @@ export async function orchestratePhotoAssignment(
       photoNames
     }
   }
+}
+
+function matchesSentiment(note: StructuredNote | undefined, photo: PhotoMetadata | undefined): boolean {
+  if (!note || !photo) {
+    return false
+  }
+  if (photo.sentiment === 'neutral') {
+    return true
+  }
+  if (note.isPositive) {
+    return photo.sentiment === 'good_practice'
+  }
+  return photo.sentiment === 'problem'
 }

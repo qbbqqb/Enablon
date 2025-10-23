@@ -25,6 +25,7 @@ import { extractObservationShells } from '@/lib/notes/extractShells'
 import { orchestratePhotoAssignment, generateSimplePhotoNames } from '@/lib/ai/agents'
 import { enrichObservation } from '@/lib/ai/enrich'
 import { mapWithConcurrency } from '@/lib/utils/concurrency'
+import { detectProjectFromNotes } from '@/lib/utils/projectDetection'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -1363,6 +1364,8 @@ export async function POST(request: NextRequest) {
 
             console.log(`Enriching observation #${shell.id} with ${assignedImages.length} photo(s)`)
 
+            const noteProject = detectProjectFromNotes(shell.fullNote) || (project as Project)
+
             const assignedIndices = assignedPhotoIds
               .map(id => id - 1)
               .filter(idx => idx >= 0 && idx < images.length)
@@ -1370,9 +1373,13 @@ export async function POST(request: NextRequest) {
             const { observation, failed: enrichmentFailed } = await enrichObservation({
               noteText: shell.fullNote,
               photos: assignedImages,
-              project: project as Project,
+              project: noteProject,
               observationNumber: shell.id
             })
+
+            if (observation) {
+              observation['Project'] = noteProject
+            }
 
             return {
               shellIndex,
