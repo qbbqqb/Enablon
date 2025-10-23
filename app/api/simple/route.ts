@@ -556,14 +556,13 @@ INSTRUCTIONS:
 - Focus on the safety issue stated in the note
 
 PHOTO MATCHING (REQUIRED):
-- For each observation, you MUST identify which photos show this specific issue
+- For each observation, review all ${images.length} photos to see if any clearly document the issue
 - Return "photo_indices": array of 1-based photo numbers [1-${images.length}]
-- Look through ALL ${images.length} photos to find matches
 - Match based on: equipment type, location markers, materials visible, hazards shown, people/PPE, contractor logos
 - A photo can appear in multiple observations if it shows multiple issues
-- Each observation MUST have at least one photo
-- If uncertain whether a photo matches, INCLUDE IT (better to have extra context than miss evidence)
-- Examples: [1], [2, 5, 6], [18, 19, 20]
+- If NO photo clearly supports the finding, return an EMPTY array [] (do NOT guess)
+- If uncertain whether a photo matches, leave it out. Accuracy beats quantity.
+- Examples: [1], [2, 5, 6], []
 
 MATCHING EXAMPLES:
 - Note mentions "telehandler with flat tire" → Find photos showing telehandlers, especially with visible tire issues
@@ -659,19 +658,71 @@ Return EXACTLY ${expectedObservations} JSON objects inside a single array (no ma
 - "General Category": pick from ${GENERAL_CATEGORIES.join(', ')} or "" if not applicable.
 - "Worst Potential Severity": choose from ${SEVERITY_LEVELS.join(' | ')}.
 - "Person Notified": leave blank unless a person is explicitly named.
-- "photo_indices": REQUIRED array of 1-based photo numbers that show this observation. Must have at least one photo. Examples: [1], [2, 5], [18, 19, 20].
+- "photo_indices": REQUIRED array of 1-based photo numbers that show this observation. Use [] when no supporting photo exists. Examples: [1], [2, 5], [].
 
 EXCLUSIVITY RULES:
 - If "Category Type" is "HRA + Significant Exposure", set "High Risk + Significant Exposure" and leave "General Category" empty.
 - If "Category Type" is "General Category", set "General Category" and leave "High Risk + Significant Exposure" empty.
 
-CRITICAL: Each observation MUST include "photo_indices" array.
+CRITICAL: Always include "photo_indices" (it can be an empty array when no photo matches).
 
 Return only the JSON array with ${expectedObservations} observations.`
 
   const imageDataUrls = images.map(img =>
     `data:${img.mimeType};base64,${img.buffer.toString('base64')}`
   )
+
+  const responseSchema = {
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        Project: { type: 'string', enum: [project] },
+        'Room/Area': { type: 'string' },
+        Comments: { type: 'string' },
+        'Observation Category': { type: 'string' },
+        'Observation Description': { type: 'string' },
+        'Responsible Party': { type: 'string' },
+        'Interim Corrective Actions': { type: 'string' },
+        'Final Corrective Actions': { type: 'string' },
+        'Category Type': { type: 'string' },
+        'Phase of Construction': { type: 'string' },
+        'Notification Date': { type: 'string' },
+        'High Risk + Significant Exposure': {
+          type: 'string',
+          enum: [''].concat(Array.from(HRA_CATEGORIES))
+        },
+        'General Category': {
+          type: 'string',
+          enum: [''].concat(Array.from(GENERAL_CATEGORIES))
+        },
+        'Worst Potential Severity': { type: 'string' },
+        'Person Notified': { type: 'string' },
+        photo_indices: {
+          type: 'array',
+          items: { type: 'integer' }
+        }
+      },
+      required: [
+        'Project',
+        'Room/Area',
+        'Comments',
+        'Observation Category',
+        'Observation Description',
+        'Responsible Party',
+        'Interim Corrective Actions',
+        'Final Corrective Actions',
+        'Category Type',
+        'Phase of Construction',
+        'Notification Date',
+        'High Risk + Significant Exposure',
+        'General Category',
+        'Worst Potential Severity',
+        'Person Notified',
+        'photo_indices'
+      ]
+    }
+  } as const
 
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -695,7 +746,15 @@ Return only the JSON array with ${expectedObservations} observations.`
         }
       ],
       max_tokens: 8000,
-      temperature: 0.1
+      temperature: 0.1,
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'enablon_simple_observations',
+          schema: responseSchema
+        }
+      },
+      response_mime_type: 'application/json'
     })
   })
 
@@ -864,16 +923,7 @@ function resolveObservationPhotoIndices(
     return unique
   }
 
-  // Fallback to sequential mapping
-  if (observationIndex < totalImages) {
-    return [observationIndex]
-  }
-
-  if (totalImages === 0) {
-    return []
-  }
-
-  return [Math.max(0, totalImages - 1)]
+  return []
 }
 
 function mapObservationImages(
@@ -894,15 +944,6 @@ function mapObservationImages(
         matchedIndices.push(index)
       }
     })
-
-    if (matchedImages.length === 0 && images.length > 0) {
-      const fallbackIndex = Math.min(observationIndex, images.length - 1)
-      const fallbackImage = images[fallbackIndex]
-      if (fallbackImage) {
-        matchedImages.push(fallbackImage)
-        matchedIndices.push(fallbackIndex)
-      }
-    }
 
     return { indices: matchedIndices, images: matchedImages }
   })
@@ -1347,17 +1388,15 @@ export async function POST(request: NextRequest) {
           Math.min(3, observationShells.length || 1),
           async (shell, shellIndex) => {
             const assignedPhotoIds = assignments[shell.id] || []
-
             if (assignedPhotoIds.length === 0) {
-              console.warn(`No photos assigned to observation #${shell.id}, skipping enrichment`)
-              return { shellIndex, observation: undefined, match: undefined, failed: undefined }
+              console.warn(`No photos assigned to observation #${shell.id}, continuing without photo evidence`)
             }
 
             const assignedImages = assignedPhotoIds
               .map(id => images[id - 1])
               .filter(Boolean)
 
-            if (assignedImages.length === 0) {
+            if (assignedPhotoIds.length > 0 && assignedImages.length === 0) {
               console.warn(`Invalid photo IDs for observation #${shell.id}`)
               return { shellIndex, observation: undefined, match: undefined, failed: undefined }
             }
@@ -1425,32 +1464,36 @@ export async function POST(request: NextRequest) {
           const tokenToImage: Record<string, ProcessedImage> = {}
           const observationImageSummaries: Array<Array<{ token: string; originalIndex: number; originalName: string; mimeType: string }>> = []
 
-          const observationsWithMeta: ObservationDraft[] = observations.map((obs, i) => {
-            const imageMatch = observationImageMatches[i]
-            const { images: matchedImages } = imageMatch
-            const tokens: string[] = []
-            const summaries: Array<{ token: string; originalIndex: number; originalName: string; mimeType: string }> = []
+            const observationsWithMeta: ObservationDraft[] = observations.map((obs, i) => {
+              const imageMatch = observationImageMatches[i]
+              const { images: matchedImages } = imageMatch
+              const tokens: string[] = []
+              const summaries: Array<{ token: string; originalIndex: number; originalName: string; mimeType: string }> = []
 
-            matchedImages.forEach((image) => {
-              const token = sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
-              tokens.push(token)
-              tokenToImage[token] = image
-              summaries.push({
-                token,
-                originalIndex: image.originalIndex,
-                originalName: image.originalName,
-                mimeType: image.mimeType
+              matchedImages.forEach((image) => {
+                const token = sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
+                tokens.push(token)
+                tokenToImage[token] = image
+                summaries.push({
+                  token,
+                  originalIndex: image.originalIndex,
+                  originalName: image.originalName,
+                  mimeType: image.mimeType
+                })
               })
+
+              observationImageSummaries.push(summaries)
+
+              return tokens.length > 0
+                ? {
+                    ...obs,
+                    __photoToken: tokens[0],
+                    __photoTokens: tokens
+                  }
+                : {
+                    ...obs
+                  }
             })
-
-            observationImageSummaries.push(summaries)
-
-            return {
-              ...obs,
-              __photoToken: tokens[0],
-              __photoTokens: tokens
-            }
-          })
 
           if (sessionId) {
             const orderedTokens = observationImageSummaries.flatMap(summaryList => summaryList.map(summary => summary.token))
@@ -1710,26 +1753,17 @@ export async function POST(request: NextRequest) {
           })
         })
 
-        if (tokens.length === 0 && images[i]) {
-          const fallbackToken = sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
-          const fallbackImage = images[i]
-          tokenToImage[fallbackToken] = fallbackImage
-          tokens.push(fallbackToken)
-          summaries.push({
-            token: fallbackToken,
-            originalIndex: fallbackImage.originalIndex,
-            originalName: fallbackImage.originalName,
-            mimeType: fallbackImage.mimeType
-          })
-        }
-
         observationImageSummaries.push(summaries)
 
-        return {
-          ...obs,
-          __photoToken: tokens[0],
-          __photoTokens: tokens
-        }
+        return tokens.length > 0
+          ? {
+              ...obs,
+              __photoToken: tokens[0],
+              __photoTokens: tokens
+            }
+          : {
+              ...obs
+            }
       })
 
       if (sessionId) {

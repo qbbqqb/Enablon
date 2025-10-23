@@ -85,13 +85,7 @@ export async function POST(request: NextRequest) {
       }
 
       if (assignedPhotos.length === 0) {
-        console.warn(`Could not find any valid photos for observation #${shell.id}`)
-        failed.push({
-          originalFilename: `observation_${shell.id}`,
-          reason: 'Assigned photos not found in session',
-          step: 'photo_retrieval'
-        })
-        continue
+        console.warn(`No photos found for observation #${shell.id}, continuing without photo evidence`)
       }
 
       console.log(`Enriching observation #${shell.id} with ${assignedPhotos.length} photo(s)`)

@@ -995,7 +995,7 @@ function validateAssignments(
   // Check all photos assigned
   const assignedPhotos = new Set(assignments.flatMap(a => a.photoIds))
   if (assignedPhotos.size !== photoCount) {
-    errors.push(`Only ${assignedPhotos.size}/${photoCount} photos assigned`)
+    warnings.push(`Only ${assignedPhotos.size}/${photoCount} photos assigned`)
   }
 
   // Check for duplicates
@@ -1020,7 +1020,7 @@ function validateAssignments(
 
   assignments.forEach(a => {
     if (a.photoIds.length === 0) {
-      errors.push(`Note ${a.noteId} has no photos assigned`)
+      warnings.push(`Note ${a.noteId} has no photos assigned`)
     }
     if (a.confidence < 0.7) {
       warnings.push(`Note ${a.noteId} has low confidence (${a.confidence})`)

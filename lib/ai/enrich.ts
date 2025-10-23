@@ -7,6 +7,7 @@ import type { ProcessedImage, Observation, FailedItem } from '../types'
 import type { Project } from '../constants/enums'
 import {
   CONSTANTS,
+  PROJECTS,
   PROJECT_MAPPINGS,
   ROOM_AREAS,
   OBSERVATION_CATEGORIES,
@@ -26,6 +27,83 @@ interface EnrichObservationInput {
   observationNumber: number
 }
 
+const ENRICHMENT_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    Project: {
+      type: 'string',
+      enum: Array.from(PROJECTS)
+    },
+    'Room/Area': {
+      type: 'string',
+      enum: Array.from(ROOM_AREAS)
+    },
+    Comments: {
+      type: 'string',
+      enum: [CONSTANTS.COMMENTS]
+    },
+    'Observation Category': {
+      type: 'string',
+      enum: Array.from(OBSERVATION_CATEGORIES)
+    },
+    'Observation Description': {
+      type: 'string'
+    },
+    'Responsible Party': {
+      type: 'string'
+    },
+    'Interim Corrective Actions': {
+      type: 'string'
+    },
+    'Final Corrective Actions': {
+      type: 'string'
+    },
+    'Category Type': {
+      type: 'string',
+      enum: Array.from(CATEGORY_TYPES)
+    },
+    'Phase of Construction': {
+      type: 'string',
+      enum: Array.from(CONSTRUCTION_PHASES)
+    },
+    'Notification Date': {
+      type: 'string'
+    },
+    'High Risk + Significant Exposure': {
+      type: 'string',
+      enum: [''].concat(Array.from(HRA_CATEGORIES))
+    },
+    'General Category': {
+      type: 'string',
+      enum: [''].concat(Array.from(GENERAL_CATEGORIES))
+    },
+    'Worst Potential Severity': {
+      type: 'string',
+      enum: Array.from(SEVERITY_LEVELS)
+    },
+    'Person Notified': {
+      type: 'string'
+    }
+  },
+  required: [
+    'Project',
+    'Room/Area',
+    'Comments',
+    'Observation Category',
+    'Observation Description',
+    'Responsible Party',
+    'Interim Corrective Actions',
+    'Final Corrective Actions',
+    'Category Type',
+    'Phase of Construction',
+    'Notification Date',
+    'High Risk + Significant Exposure',
+    'General Category',
+    'Worst Potential Severity',
+    'Person Notified'
+  ]
+} as const
+
 export async function enrichObservation({
   noteText,
   photos,
@@ -44,25 +122,27 @@ export async function enrichObservation({
       `data:${img.mimeType};base64,${img.buffer.toString('base64')}`
     )
 
-    const response = await callOpenRouterAPI(prompt, imageDataUrls)
+    const response = await callOpenRouterAPI(prompt, imageDataUrls, { schema: ENRICHMENT_RESPONSE_SCHEMA })
     console.log(`Raw AI response for observation #${observationNumber}:`, response)
-
-    // Strip markdown code blocks if present
-    let cleanResponse = response.trim()
-    if (cleanResponse.startsWith('```json')) {
-      cleanResponse = cleanResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '')
-    } else if (cleanResponse.startsWith('```')) {
-      cleanResponse = cleanResponse.replace(/^```\s*/, '').replace(/\s*```$/, '')
-    }
 
     let rawObservation
     try {
-      rawObservation = JSON.parse(cleanResponse)
+      rawObservation = JSON.parse(response.trim())
       console.log(`Parsed observation #${observationNumber} from AI response`)
     } catch (parseError) {
       console.error(`JSON parse error for observation #${observationNumber}:`, parseError)
-      console.error('Cleaned response that failed to parse:', cleanResponse)
-      throw new Error(`Failed to parse AI response as JSON: ${parseError}`)
+      console.error('Response that failed to parse:', response)
+
+      // Fallback to legacy cleaning in case schema enforcement was ignored
+      let fallback = response.trim()
+      if (fallback.startsWith('```json')) {
+        fallback = fallback.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+      } else if (fallback.startsWith('```')) {
+        fallback = fallback.replace(/^```\s*/, '').replace(/\s*```$/, '')
+      }
+
+      rawObservation = JSON.parse(fallback)
+      console.log(`Parsed observation #${observationNumber} using fallback cleaning`)
     }
 
     // AI should return a single object, but might return an array with one item
@@ -221,7 +301,11 @@ Return exactly 15 fields in this JSON object:
 Return only the JSON object.`
 }
 
-async function callOpenRouterAPI(prompt: string, imageDataUrls: string[]): Promise<string> {
+async function callOpenRouterAPI(
+  prompt: string,
+  imageDataUrls: string[],
+  options?: { schema?: object }
+): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY
   if (!apiKey) {
     throw new Error('OPENROUTER_API_KEY environment variable is required')
@@ -242,6 +326,23 @@ async function callOpenRouterAPI(prompt: string, imageDataUrls: string[]): Promi
 
   console.log(`Calling OpenRouter API with ${imageDataUrls.length} image(s)`)
 
+  const body: Record<string, any> = {
+    model: 'google/gemini-2.5-flash',
+    messages,
+    temperature: 0.2
+  }
+
+  if (options?.schema) {
+    body.response_format = {
+      type: 'json_schema',
+      json_schema: {
+        name: 'enablon_observation',
+        schema: options.schema
+      }
+    }
+    body.response_mime_type = 'application/json'
+  }
+
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -250,11 +351,7 @@ async function callOpenRouterAPI(prompt: string, imageDataUrls: string[]): Promi
       'HTTP-Referer': process.env.OPENROUTER_APP_URL || '',
       'X-Title': process.env.OPENROUTER_APP_NAME || 'Enablon Observation Bundler'
     },
-    body: JSON.stringify({
-      model: 'google/gemini-2.5-flash',
-      messages,
-      temperature: 0.2
-    })
+    body: JSON.stringify(body)
   })
 
   if (!response.ok) {
