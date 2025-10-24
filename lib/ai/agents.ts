@@ -875,42 +875,49 @@ async function matchPhotosToNotes(
     }
 
     structuredNotes.forEach((note, index) => {
-      const candidates = affinityMap.get(note.noteId) ?? []
-      const bestCandidate = candidates.find(candidate => !assignedPhotos.has(candidate.photoId) && candidate.score >= AFFINITY_STRONG_THRESHOLD)
+      const candidates = (affinityMap.get(note.noteId) ?? []).filter(candidate => !assignedPhotos.has(candidate.photoId))
 
-      if (bestCandidate) {
+      const strongCandidate = candidates.find(candidate => candidate.score >= AFFINITY_STRONG_THRESHOLD)
+      const fallbackCandidate = strongCandidate ?? candidates[0]
+
+      if (fallbackCandidate) {
+        assignedPhotos.add(fallbackCandidate.photoId)
+
         const detailParts = [
-          bestCandidate.matchedLocations.length > 0 ? `locations: ${bestCandidate.matchedLocations.join(', ')}` : '',
-          bestCandidate.matchedIssues.length > 0 ? `issues: ${bestCandidate.matchedIssues.join(', ')}` : '',
-          bestCandidate.matchedKeywords.length > 0 ? `keywords: ${bestCandidate.matchedKeywords.join(', ')}` : ''
+          fallbackCandidate.matchedLocations.length > 0 ? `locations: ${fallbackCandidate.matchedLocations.join(', ')}` : '',
+          fallbackCandidate.matchedIssues.length > 0 ? `issues: ${fallbackCandidate.matchedIssues.join(', ')}` : '',
+          fallbackCandidate.matchedKeywords.length > 0 ? `keywords: ${fallbackCandidate.matchedKeywords.join(', ')}` : ''
         ].filter(Boolean)
 
-        assignedPhotos.add(bestCandidate.photoId)
+        const confidenceBase = strongCandidate ? 0.75 : 0.6
+        const confidence = Math.min(0.95, confidenceBase + Math.min(fallbackCandidate.score, 3) * 0.08)
+
         assignmentById.set(note.noteId, {
           noteId: note.noteId,
-          photoIds: [bestCandidate.photoId],
+          photoIds: [fallbackCandidate.photoId],
           reasoning: detailParts.length > 0
-            ? `Affinity match (score ${bestCandidate.score.toFixed(2)}) via ${detailParts.join('; ')}`
-            : `Affinity match (score ${bestCandidate.score.toFixed(2)})`,
-          confidence: Math.min(0.95, 0.7 + bestCandidate.score * 0.1)
+            ? `Affinity ${strongCandidate ? 'match' : 'best available'} (score ${fallbackCandidate.score.toFixed(2)}) via ${detailParts.join('; ')}`
+            : `Affinity ${strongCandidate ? 'match' : 'best available'} (score ${fallbackCandidate.score.toFixed(2)})`,
+          confidence
+        })
+        return
+      }
+
+      const fallbackPhotoId = takeSequentialPhoto(index, note)
+      if (fallbackPhotoId !== null) {
+        assignmentById.set(note.noteId, {
+          noteId: note.noteId,
+          photoIds: [fallbackPhotoId],
+          reasoning: `Sequential fallback to photo ${fallbackPhotoId} (no affinity candidates)`,
+          confidence: 0.55
         })
       } else {
-        const fallbackPhotoId = takeSequentialPhoto(index, note)
-        if (fallbackPhotoId !== null) {
-          assignmentById.set(note.noteId, {
-            noteId: note.noteId,
-            photoIds: [fallbackPhotoId],
-            reasoning: `Sequential fallback to photo ${fallbackPhotoId} (no strong affinity match)`,
-            confidence: 0.6
-          })
-        } else {
-          assignmentById.set(note.noteId, {
-            noteId: note.noteId,
-            photoIds: [],
-            reasoning: 'No photo available after affinity scan',
-            confidence: 0.4
-          })
-        }
+        assignmentById.set(note.noteId, {
+          noteId: note.noteId,
+          photoIds: [],
+          reasoning: 'No photo available after affinity scan',
+          confidence: 0.4
+        })
       }
     })
 
