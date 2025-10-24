@@ -2,7 +2,7 @@ import archiver from 'archiver'
 import type { Observation, ObservationDraft, ProcessedImage, ManifestEntry, FailedItem } from '../types'
 import type { Project } from '../constants/enums'
 import { buildCSV } from '../csv/buildCsv'
-import { deduplicateFilename, generateSimplePhotoSlug, slugFromOriginalName } from '../files/rename'
+import { deduplicateFilename, buildObservationPhotoSlug } from '../files/rename'
 
 export interface ZipContentInput {
   observations: Observation[]
@@ -22,76 +22,12 @@ function sanitizeProjectSegment(project: string | undefined): string {
     || 'PROJECT'
 }
 
-function sanitizeTitleSegment(raw: string | undefined): string {
-  if (!raw) return ''
-  const cleaned = raw.trim()
-  if (!cleaned || cleaned.toUpperCase() === 'N/A') {
-    return ''
-  }
-
-  const tokens = cleaned
-    .normalize('NFKD')
-    .replace(/[^A-Za-z0-9\s-]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-
-  if (tokens.length === 0) {
-    return ''
-  }
-
-  const formatted = tokens.map(token => {
-    if (token.length <= 3 && token === token.toUpperCase()) {
-      return token.toUpperCase()
-    }
-    if (/^[A-Z0-9-]+$/.test(token) && token === token.toUpperCase()) {
-      return token
-    }
-    return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase()
-  })
-
-  return formatted.join('-')
-}
-
-function sanitizeSeveritySegment(raw: string | undefined): string {
-  if (!raw) return ''
-  const withoutParens = raw.replace(/\(.*?\)/g, '').trim()
-  return sanitizeTitleSegment(withoutParens)
-}
-
 function sanitizeDateSegment(raw: string | undefined, fallbackDate: string): string {
   if (!raw) return fallbackDate
   const match = raw.match(/(\d{4})[-/]?(\d{2})[-/]?(\d{2})/)
   if (!match) return fallbackDate
   const [, year, month, day] = match
   return `${year}${month}${day}`
-}
-
-function sanitizeSlugSegment(raw: string | undefined): string {
-  if (!raw) return ''
-  return raw
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-}
-
-function buildCategorySegment(observation: Observation | undefined): string {
-  if (!observation) return ''
-  const categoryType = (observation as ObservationDraft)['Category Type']
-  const hra = (observation as ObservationDraft)['High Risk + Significant Exposure']
-  const general = observation['General Category']
-  const observationCategory = observation['Observation Category']
-
-  if (categoryType === 'HRA + Significant Exposure' && hra) {
-    return sanitizeTitleSegment(hra)
-  }
-
-  if (general) {
-    const formatted = sanitizeTitleSegment(general)
-    if (formatted) return formatted
-  }
-
-  return sanitizeTitleSegment(observationCategory)
 }
 
 function limitFilenameLength(name: string): string {
@@ -124,103 +60,59 @@ export function createZipStream(input: ZipContentInput): {
   const csvContent = buildCSV(observations)
   archive.append(Buffer.from(csvContent, 'utf8'), { name: 'observations.csv' })
 
-  const observationPhotoCounters = new Array(observations.length).fill(0)
-  const observationPhotoTotals = observations.map(obs => {
-    const draft = obs as ObservationDraft
-    return Array.isArray(draft.__photoIndices)
-      ? draft.__photoIndices.filter(value => Number.isInteger(value) && value > 0).length
-      : 0
-  })
-
-  const photoToObservation = new Map<number, number>()
+  const photoToObservation = new Map<number, { obsIndex: number; position: number; total: number }>()
   observations.forEach((obs, obsIndex) => {
     const draft = obs as ObservationDraft
     const indices = Array.isArray(draft.__photoIndices) ? draft.__photoIndices : []
     indices
       .filter(value => Number.isInteger(value) && value > 0)
-      .forEach(photoId => {
-        if (!photoToObservation.has(photoId)) {
-          photoToObservation.set(photoId, obsIndex)
+      .forEach((photoId, position, validArray) => {
+        if (photoToObservation.has(photoId)) {
+          return
         }
+        photoToObservation.set(photoId, {
+          obsIndex,
+          position,
+          total: validArray.length
+        })
       })
   })
 
   // Add all photos with descriptive names tied to their observations
-  // Format: {Project}-{ObsNo}-{Area}-{Category}-{Severity}-{YYYYMMDD}-{slug}[-N].jpg
+  // Format: {PROJECT}-OBS{###}-{YYYYMMDD}-{slug}[-N].jpg
   images.forEach((image, imageIndex) => {
     // CRITICAL: Use originalIndex (photoId from Agent 1) to look up the photo name,
     // NOT imageIndex (current position in array after Agent 3B reassignment)!
     const originalPhotoId = image.originalIndex + 1 // originalIndex is 0-based, photoId is 1-based
 
-    let obsIndex = photoToObservation.get(originalPhotoId) ?? -1
-
-    if (obsIndex === -1) {
-      obsIndex = observations.findIndex(obs => {
-        const draft = obs as ObservationDraft
-        return draft.__photoIndices?.includes(originalPhotoId)
-      })
-      if (obsIndex !== -1) {
-        photoToObservation.set(originalPhotoId, obsIndex)
-      }
-    }
-
+    const obsInfo = photoToObservation.get(originalPhotoId)
+    const obsIndex = obsInfo?.obsIndex ?? -1
     const relatedObs = obsIndex !== -1 ? observations[obsIndex] : undefined
-
-    if (obsIndex !== -1) {
-      observationPhotoCounters[obsIndex] += 1
-    }
-    const ordinalForObservation = obsIndex !== -1 ? observationPhotoCounters[obsIndex] : 0
-    const totalForObservation = obsIndex !== -1 ? observationPhotoTotals[obsIndex] : 0
 
     const projectSegment = sanitizeProjectSegment(relatedObs?.Project || project)
     const observationNumber = obsIndex !== -1
-      ? String(obsIndex + 1).padStart(3, '0')
-      : '000'
-    const areaSegment = sanitizeTitleSegment(relatedObs?.['Room/Area'])
-    const categorySegment = buildCategorySegment(relatedObs)
-    const severitySegment = sanitizeSeveritySegment(relatedObs?.['Worst Potential Severity'])
+      ? `OBS${String(obsIndex + 1).padStart(3, '0')}`
+      : 'OBS000'
     const dateSegment = sanitizeDateSegment(
       relatedObs?.['Notification Date'],
       datePrefix
     )
 
-    const slugCandidates: string[] = []
-    if (photoNames && photoNames[originalPhotoId]) {
-      slugCandidates.push(photoNames[originalPhotoId])
-    }
-    if (relatedObs?.['Observation Description']) {
-      slugCandidates.push(generateSimplePhotoSlug(relatedObs['Observation Description']))
-    }
-    slugCandidates.push(slugFromOriginalName(image.originalName))
-    slugCandidates.push(`photo-${String(originalPhotoId).padStart(3, '0')}`)
+    const slugSegment = buildObservationPhotoSlug({
+      aiName: photoNames?.[originalPhotoId],
+      description: relatedObs?.['Observation Description'],
+      originalName: image.originalName
+    })
 
-    const slugSegment = sanitizeSlugSegment(
-      slugCandidates.find(candidate => sanitizeSlugSegment(candidate)) || ''
-    ) || 'observation'
+    const suffix = obsInfo && obsInfo.total > 1
+      ? `-${obsInfo.position + 1}`
+      : ''
 
-    const needSuffix =
-      obsIndex !== -1
-        ? (totalForObservation > 1 || (totalForObservation <= 1 && ordinalForObservation > 1))
-        : false
-    const suffix = needSuffix ? `-${ordinalForObservation}` : ''
-
-    const parts = [
-      projectSegment,
-      observationNumber,
-      areaSegment,
-      categorySegment,
-      severitySegment,
-      dateSegment,
-      slugSegment
-    ].filter(Boolean)
-
-    let baseFilename = parts.join('-')
-    baseFilename = baseFilename.replace(/-+/g, '-').replace(/^-|-$/g, '')
-    baseFilename = limitFilenameLength(baseFilename)
-
-    if (!baseFilename) {
-      baseFilename = `${projectSegment}-${observationNumber}-${dateSegment}-photo`
-    }
+    const baseFilename = limitFilenameLength(
+      [projectSegment, observationNumber, dateSegment, slugSegment]
+        .filter(Boolean)
+        .join('-') || `${projectSegment}-${observationNumber}-${dateSegment}-photo`
+    )
 
     const finalName = `${baseFilename}${suffix}.jpg`
     const dedupedName = deduplicateFilename(finalName, usedFilenames)

@@ -85,6 +85,6 @@ describe('generateSimplePhotoNames', () => {
     const result = await generateSimplePhotoNames(images, observations)
 
     expect(result[1]).toBe('trailing-comma')
-    expect(result[2]).toBe('general-housekeeping-compliance')
+    expect(result[2]).toBe('housekeeping-compliance')
   })
 })

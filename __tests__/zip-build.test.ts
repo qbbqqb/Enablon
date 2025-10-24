@@ -71,13 +71,13 @@ describe('createZipStream photo naming', () => {
 
     expect(manifest).toHaveLength(3)
     expect(manifest[0].renamedFilename).toBe(
-      'GVX04-001-External-Area-Housekeeping-Minor-20250115-damaged-cable-1.jpg'
+      'GVX04-OBS001-20250115-damaged-cable-1.jpg'
     )
     expect(manifest[1].renamedFilename).toBe(
-      'GVX04-001-External-Area-Housekeeping-Minor-20250115-damaged-cable-second-2.jpg'
+      'GVX04-OBS001-20250115-damaged-cable-second-2.jpg'
     )
     expect(manifest[2].renamedFilename).toBe(
-      'GVX03-002-COLO1-Electrical-Contact-Major-20250116-ppe-compliance.jpg'
+      'GVX03-OBS002-20250116-ppe-compliance.jpg'
     )
   })
 
@@ -97,7 +97,7 @@ describe('createZipStream photo naming', () => {
     })
 
     expect(manifest).toHaveLength(2)
-    expect(manifest[1].renamedFilename).toMatch(/^GVX04-000-\d{8}-extra-photo\.jpg$/)
+    expect(manifest[1].renamedFilename).toMatch(/^GVX04-OBS000-\d{8}-extra\.jpg$/)
     expect(manifest[1].rowNumber).toBe(0)
   })
 })

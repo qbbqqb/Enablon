@@ -73,6 +73,32 @@ const ISSUE_STOP_WORDS = new Set([
   'noted'
 ])
 
+const OBS_PHOTO_STOP_WORDS = new Set([
+  'project',
+  'area',
+  'room',
+  'cell',
+  'colo',
+  'engineering',
+  'company',
+  'limited',
+  'contractor',
+  'subcontractor',
+  'location',
+  'observed',
+  'inspection',
+  'site',
+  'general',
+  'category',
+  'observation',
+  'photo',
+  'image',
+  'jpeg',
+  'jpg'
+])
+
+const OBS_PHOTO_WORD_LIMIT = 4
+
 function pickKeywordSegment(source: string | undefined, fallback: string): string {
   const tokens = (source?.match(/[A-Za-z0-9]+/g) ?? []).map(token => token.trim()).filter(Boolean)
   if (tokens.length === 0) {
@@ -213,4 +239,92 @@ export function generateSimplePhotoSlug(description: string): string {
 
   const slug = keywords.join('-').substring(0, 40)
   return slug || 'observation'
+}
+
+function toObservationTokens(input: string): string[] {
+  const normalized = input
+    .normalize('NFKD')
+    .replace(/[^A-Za-z0-9\s-]/g, ' ')
+    .replace(/-/g, ' ')
+    .toLowerCase()
+  const rawTokens = normalized.split(/\s+/).filter(Boolean)
+
+  const tokens: string[] = []
+  const seen = new Set<string>()
+
+  for (const token of rawTokens) {
+    if (OBS_PHOTO_STOP_WORDS.has(token)) {
+      continue
+    }
+    if (token.length <= 2) {
+      continue
+    }
+    if (seen.has(token)) {
+      continue
+    }
+    seen.add(token)
+    tokens.push(token)
+  }
+
+  return tokens
+}
+
+function buildSlugFromTokens(tokens: string[]): string {
+  const limited = tokens.slice(0, OBS_PHOTO_WORD_LIMIT)
+  return limited.join('-')
+}
+
+function sanitizeSlug(slug: string): string {
+  return slug
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60)
+}
+
+export function buildObservationPhotoSlug(options: {
+  aiName?: string
+  description?: string
+  originalName?: string
+}): string {
+  const { aiName, description, originalName } = options
+
+  const candidates: string[] = []
+
+  if (aiName) {
+    candidates.push(aiName)
+  }
+
+  if (description) {
+    const content = description.includes(':')
+      ? description.split(':').slice(1).join(':').trim()
+      : description
+    candidates.push(content)
+  }
+
+  if (originalName) {
+    candidates.push(originalName)
+  }
+
+  let fallbackSlug = ''
+
+  for (const candidate of candidates) {
+    const tokens = toObservationTokens(candidate)
+    if (tokens.length === 0) {
+      continue
+    }
+    const slug = sanitizeSlug(buildSlugFromTokens(tokens))
+    if (!slug) {
+      continue
+    }
+
+    if (tokens.length >= 2) {
+      return slug
+    }
+
+    if (!fallbackSlug) {
+      fallbackSlug = slug
+    }
+  }
+
+  return fallbackSlug || 'observation'
 }

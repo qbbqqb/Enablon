@@ -24,7 +24,7 @@ import {
   SEVERITY_LEVELS
 } from '../constants/enums'
 import { getStockholmDate } from '../date/stockholm'
-import { generateSimplePhotoSlug, slugFromOriginalName } from '../files/rename'
+import { generateSimplePhotoSlug, slugFromOriginalName, buildObservationPhotoSlug } from '../files/rename'
 
 // Photo metadata extracted by Agent 1
 interface PhotoMetadata {
@@ -56,6 +56,167 @@ interface AssignmentWithReasoning {
   photoIds: number[]
   reasoning: string
   confidence: number
+}
+
+interface AffinityCandidate {
+  photoId: number
+  score: number
+  matchedLocations: string[]
+  matchedIssues: string[]
+  matchedKeywords: string[]
+}
+
+const AFFINITY_STRONG_THRESHOLD = 1.5
+
+function tokenize(text: string | undefined): string[] {
+  if (!text) return []
+  return text
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .replace(/-/g, ' ')
+    .split(/\s+/)
+    .filter(token => token.length > 2)
+}
+
+function buildNoteProfile(note: StructuredNote) {
+  const locationTokens = new Set(tokenize(note.location))
+  const issueTokens = new Set<string>()
+  const keywordTokens = new Set<string>()
+
+  if (note.issueType) {
+    issueTokens.add(note.issueType.toLowerCase())
+  }
+
+  note.requiredElements.forEach(element => {
+    tokenize(element).forEach(token => issueTokens.add(token))
+  })
+
+  note.keywords.forEach(keyword => {
+    tokenize(keyword).forEach(token => keywordTokens.add(token))
+  })
+
+  tokenize(note.originalText).forEach(token => keywordTokens.add(token))
+
+  return { locationTokens, issueTokens, keywordTokens }
+}
+
+function buildPhotoProfile(photo: PhotoMetadata) {
+  const locationTokens = new Set(tokenize(photo.location))
+  const issueTokens = new Set<string>()
+  const contextTokens = new Set<string>()
+
+  const addTokens = (value: string | string[] | undefined, target: Set<string>) => {
+    if (!value) return
+    if (Array.isArray(value)) {
+      value.forEach(entry => tokenize(entry).forEach(token => target.add(token)))
+    } else {
+      tokenize(value).forEach(token => target.add(token))
+    }
+  }
+
+  addTokens(photo.safetyIssues, issueTokens)
+  addTokens(photo.conditions, contextTokens)
+  addTokens(photo.equipment, contextTokens)
+  addTokens(photo.people, contextTokens)
+
+  return { locationTokens, issueTokens, contextTokens }
+}
+
+function computeAffinityCandidate(
+  photo: PhotoMetadata,
+  note: StructuredNote,
+  noteProfile: ReturnType<typeof buildNoteProfile>,
+  photoProfile: ReturnType<typeof buildPhotoProfile>
+): AffinityCandidate | null {
+  if (note.isPositive && photo.sentiment === 'problem') {
+    return null
+  }
+  if (!note.isPositive && photo.sentiment === 'good_practice') {
+    return null
+  }
+
+  const locationMatches = new Set<string>()
+  noteProfile.locationTokens.forEach(token => {
+    if (photoProfile.locationTokens.has(token)) {
+      locationMatches.add(token)
+    }
+  })
+
+  const issueMatches = new Set<string>()
+  noteProfile.issueTokens.forEach(token => {
+    if (photoProfile.issueTokens.has(token)) {
+      issueMatches.add(token)
+    }
+  })
+
+  const keywordMatches = new Set<string>()
+  noteProfile.keywordTokens.forEach(token => {
+    if (photoProfile.contextTokens.has(token)) {
+      keywordMatches.add(token)
+    }
+  })
+
+  let score = 0
+
+  if (locationMatches.size > 0) {
+    score += 2
+    score += (locationMatches.size - 1) * 0.25
+  }
+
+  if (issueMatches.size > 0) {
+    score += issueMatches.size * 1.2
+  }
+
+  if (keywordMatches.size > 0) {
+    score += Math.min(keywordMatches.size, 4) * 0.4
+  }
+
+  if (photo.sentiment !== 'neutral') {
+    score += 0.3
+  }
+
+  if (score <= 0) {
+    return null
+  }
+
+  return {
+    photoId: photo.photoId,
+    score,
+    matchedLocations: Array.from(locationMatches),
+    matchedIssues: Array.from(issueMatches),
+    matchedKeywords: Array.from(keywordMatches).slice(0, 4)
+  }
+}
+
+function buildAffinityMap(
+  photos: PhotoMetadata[],
+  notes: StructuredNote[]
+): Map<number, AffinityCandidate[]> {
+  const affinity = new Map<number, AffinityCandidate[]>()
+
+  const noteProfiles = notes.map(buildNoteProfile)
+  const photoProfiles = photos.map(buildPhotoProfile)
+
+  notes.forEach((note, noteIndex) => {
+    const candidates: AffinityCandidate[] = []
+    photos.forEach((photo, photoIndex) => {
+      const candidate = computeAffinityCandidate(
+        photo,
+        note,
+        noteProfiles[noteIndex],
+        photoProfiles[photoIndex]
+      )
+      if (candidate) {
+        candidates.push(candidate)
+      }
+    })
+
+    candidates.sort((a, b) => b.score - a.score)
+    affinity.set(note.noteId, candidates)
+  })
+
+  return affinity
 }
 
 // Photo name suggestion from Agent 5
@@ -686,48 +847,78 @@ async function matchPhotosToNotes(
   const leftoverPhotoIds = new Set<number>()
 
   if (notePattern === 'numbered') {
-    console.log('   Using DIRECT MATCHING strategy (numbered notes)')
-    const pairCount = Math.min(photoMetadata.length, structuredNotes.length)
+    console.log('   Using DIRECT MATCHING strategy (numbered notes with affinity boost)')
+    const affinityMap = buildAffinityMap(photoMetadata, structuredNotes)
+    const assignedPhotos = new Set<number>()
 
-    for (let i = 0; i < structuredNotes.length; i++) {
-      const note = structuredNotes[i]
-      const photo = i < pairCount ? photoMetadata[i] : undefined
+    const takeSequentialPhoto = (preferredIndex: number, note: StructuredNote): number | null => {
+      for (let offset = 0; offset < photoMetadata.length; offset++) {
+        const idx = preferredIndex + offset
+        if (idx >= photoMetadata.length) {
+          break
+        }
+        const candidatePhoto = photoMetadata[idx]
+        if (
+          (note.isPositive && candidatePhoto.sentiment === 'problem') ||
+          (!note.isPositive && candidatePhoto.sentiment === 'good_practice')
+        ) {
+          continue
+        }
+        const candidateId = candidatePhoto.photoId
+        if (assignedPhotos.has(candidateId)) {
+          continue
+        }
+        assignedPhotos.add(candidateId)
+        return candidateId
+      }
+      return null
+    }
 
-      if (photo) {
-        const sentimentMatch =
-          photo.sentiment === 'neutral' ||
-          (photo.sentiment === 'problem' && !note.isPositive) ||
-          (photo.sentiment === 'good_practice' && note.isPositive)
+    structuredNotes.forEach((note, index) => {
+      const candidates = affinityMap.get(note.noteId) ?? []
+      const bestCandidate = candidates.find(candidate => !assignedPhotos.has(candidate.photoId) && candidate.score >= AFFINITY_STRONG_THRESHOLD)
 
-        if (sentimentMatch) {
+      if (bestCandidate) {
+        const detailParts = [
+          bestCandidate.matchedLocations.length > 0 ? `locations: ${bestCandidate.matchedLocations.join(', ')}` : '',
+          bestCandidate.matchedIssues.length > 0 ? `issues: ${bestCandidate.matchedIssues.join(', ')}` : '',
+          bestCandidate.matchedKeywords.length > 0 ? `keywords: ${bestCandidate.matchedKeywords.join(', ')}` : ''
+        ].filter(Boolean)
+
+        assignedPhotos.add(bestCandidate.photoId)
+        assignmentById.set(note.noteId, {
+          noteId: note.noteId,
+          photoIds: [bestCandidate.photoId],
+          reasoning: detailParts.length > 0
+            ? `Affinity match (score ${bestCandidate.score.toFixed(2)}) via ${detailParts.join('; ')}`
+            : `Affinity match (score ${bestCandidate.score.toFixed(2)})`,
+          confidence: Math.min(0.95, 0.7 + bestCandidate.score * 0.1)
+        })
+      } else {
+        const fallbackPhotoId = takeSequentialPhoto(index, note)
+        if (fallbackPhotoId !== null) {
           assignmentById.set(note.noteId, {
             noteId: note.noteId,
-            photoIds: [photo.photoId],
-            reasoning: `Direct numbered match with photo ${photo.photoId}`,
-            confidence: 0.92
+            photoIds: [fallbackPhotoId],
+            reasoning: `Sequential fallback to photo ${fallbackPhotoId} (no strong affinity match)`,
+            confidence: 0.6
           })
         } else {
           assignmentById.set(note.noteId, {
             noteId: note.noteId,
             photoIds: [],
-            reasoning: `Skipped photo ${photo.photoId} due to sentiment mismatch`,
-            confidence: 0.45
+            reasoning: 'No photo available after affinity scan',
+            confidence: 0.4
           })
-          leftoverPhotoIds.add(photo.photoId)
         }
-      } else {
-        assignmentById.set(note.noteId, {
-          noteId: note.noteId,
-          photoIds: [],
-          reasoning: 'No photo aligned in numbered pass',
-          confidence: 0.45
-        })
       }
-    }
+    })
 
-    for (let i = structuredNotes.length; i < photoMetadata.length; i++) {
-      leftoverPhotoIds.add(photoMetadata[i].photoId)
-    }
+    photoMetadata.forEach(photo => {
+      if (!assignedPhotos.has(photo.photoId)) {
+        leftoverPhotoIds.add(photo.photoId)
+      }
+    })
   } else {
     console.log('   Using BUCKETED AI MATCHING strategy (unnumbered notes)')
     structuredNotes.forEach(note => {
@@ -1663,30 +1854,37 @@ function sanitizeAndAssignPhotoNames(options: {
       sanitizeSuggestedSlug(`photo-${photoId}`)
     ].filter(Boolean)
 
-    let fallbackSlug = fallbackCandidates.find(slug => wordCount(slug) >= 3)
-      || fallbackCandidates.find(slug => wordCount(slug) >= 2)
-      || fallbackCandidates[0]
-      || `photo-${photoId}`
-
-    if (wordCount(fallbackSlug) < 3) {
-      fallbackSlug = sanitizeSuggestedSlug(`photo-${photoId}`) || `photo-${photoId}`
-    }
-
     const preferredSlug = suggestionMap.get(photoId)
-    const candidateInput = preferredSlug || deterministicSlug || fallbackSlug
+    const candidateInput = preferredSlug || deterministicSlug || fallbackCandidates[0] || `photo-${photoId}`
 
     const guardedSlug = applyNamingGuardrails({
       candidate: candidateInput,
-      deterministic: deterministicSlug || fallbackSlug,
-      fallback: fallbackSlug,
+      deterministic: deterministicSlug || fallbackCandidates[0] || '',
+      fallback: fallbackCandidates[0] || `photo-${photoId}`,
       locationTokens,
       issueTokens
     })
 
+    const limitedSlug = buildObservationPhotoSlug({
+      aiName: guardedSlug.replace(/-/g, ' '),
+      description: observationDescription,
+      originalName: image.originalName
+    })
+
+    const limitedFallbacks = fallbackCandidates
+      .map(candidate =>
+        buildObservationPhotoSlug({
+          aiName: candidate.replace(/-/g, ' '),
+          description: observationDescription,
+          originalName: image.originalName
+        })
+      )
+      .filter(Boolean)
+
     const finalSlug = dedupeSlug(
-      guardedSlug,
+      limitedSlug,
       usedSlugs,
-      fallbackCandidates,
+      limitedFallbacks,
       photoId,
       deterministic ? deterministicSlugSuffix(deterministic.slug, photoId) : undefined
     )
@@ -1790,10 +1988,6 @@ function dedupeSlug(
   const emergency = limitSlug(`${limitedBase}-photo-${photoId}`)
   used.add(emergency)
   return emergency
-}
-
-function wordCount(slug: string): number {
-  return slug.split('-').filter(Boolean).length
 }
 
 function limitSlug(slug: string, maxLength = 60): string {
@@ -2071,4 +2265,8 @@ function matchesSentiment(note: StructuredNote | undefined, photo: PhotoMetadata
     return photo.sentiment === 'good_practice'
   }
   return photo.sentiment === 'problem'
+}
+
+export const __testHelpers = {
+  matchPhotosToNotes
 }
