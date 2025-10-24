@@ -118,7 +118,19 @@ Be precise. No speculation. Only what you see.`
   })
 
   const data = await response.json()
-  let content = data.choices[0].message.content.trim()
+
+  if (!response.ok) {
+    const errPayload = typeof data === 'object' ? JSON.stringify(data) : String(data)
+    throw new Error(`Photo analysis failed for photo ${index + 1}: ${response.status} ${errPayload}`)
+  }
+
+  const choice = data?.choices?.[0]?.message?.content
+  if (!choice || typeof choice !== 'string') {
+    const errorMessage = data?.error?.message || data?.message || 'Gemini photo analysis returned no content'
+    throw new Error(`Photo analysis failed for photo ${index + 1}: ${errorMessage}`)
+  }
+
+  let content = choice.trim()
 
   // Clean markdown
   if (content.startsWith('```json')) {
