@@ -1408,6 +1408,7 @@ export async function POST(request: NextRequest) {
             const assignedIndices = assignedPhotoIds
               .map(id => id - 1)
               .filter(idx => idx >= 0 && idx < images.length)
+            const assignedOriginalPhotoIds = assignedImages.map(image => image.originalIndex + 1)
 
             const { observation, failed: enrichmentFailed } = await enrichObservation({
               noteText: shell.fullNote,
@@ -1419,6 +1420,8 @@ export async function POST(request: NextRequest) {
             if (observation) {
               const resolvedProject = normalizeProjectForOutput(noteProject)
               observation['Project'] = resolvedProject
+              const draft = observation as ObservationDraft
+              draft.__photoIndices = assignedOriginalPhotoIds
             }
 
             return {
@@ -1469,6 +1472,12 @@ export async function POST(request: NextRequest) {
               const { images: matchedImages } = imageMatch
               const tokens: string[] = []
               const summaries: Array<{ token: string; originalIndex: number; originalName: string; mimeType: string }> = []
+              const photoIndices = matchedImages.map(image => image.originalIndex + 1)
+
+              const baseObservation: ObservationDraft = {
+                ...(obs as ObservationDraft),
+                __photoIndices: photoIndices
+              }
 
               matchedImages.forEach((image) => {
                 const token = sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
@@ -1486,13 +1495,11 @@ export async function POST(request: NextRequest) {
 
               return tokens.length > 0
                 ? {
-                    ...obs,
+                    ...baseObservation,
                     __photoToken: tokens[0],
                     __photoTokens: tokens
                   }
-                : {
-                    ...obs
-                  }
+                : baseObservation
             })
 
           if (sessionId) {
@@ -1718,6 +1725,11 @@ export async function POST(request: NextRequest) {
 
     const observationImageMatches = mapObservationImages(rawObservations, observations, images, currentPhotoContexts || photoContexts)
 
+    observationImageMatches.forEach((match, index) => {
+      const draft = observations[index] as ObservationDraft
+      draft.__photoIndices = match.images.map(image => image.originalIndex + 1)
+    })
+
     reportProgress(sessionId, 75, 'Applying project rules...', 'analysis', {
       processed: observations.length,
       total: images.length
@@ -1740,6 +1752,12 @@ export async function POST(request: NextRequest) {
         const { images: matchedImages } = imageMatch
         const tokens: string[] = []
         const summaries: Array<{ token: string; originalIndex: number; originalName: string; mimeType: string }> = []
+        const photoIndices = matchedImages.map(image => image.originalIndex + 1)
+
+        const baseObservation: ObservationDraft = {
+          ...(obs as ObservationDraft),
+          __photoIndices: photoIndices
+        }
 
         matchedImages.forEach((image) => {
           const token = sessionId ? `${sessionId}:${randomUUID()}` : randomUUID()
@@ -1757,13 +1775,11 @@ export async function POST(request: NextRequest) {
 
         return tokens.length > 0
           ? {
-              ...obs,
+              ...baseObservation,
               __photoToken: tokens[0],
               __photoTokens: tokens
             }
-          : {
-              ...obs
-            }
+          : baseObservation
       })
 
       if (sessionId) {
