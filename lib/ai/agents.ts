@@ -1135,7 +1135,13 @@ async function matchPhotosToNotes(
           const currentBestScore = bestCandidate?.score ?? -Infinity
           const adjustedScore = candidate.score - (assignment.photoIds.length * 0.25)
           if (adjustedScore > currentBestScore) {
-            bestCandidate = { ...candidate, score: adjustedScore }
+            bestCandidate = {
+              photoId: candidate.photoId,
+              score: adjustedScore,
+              matchedLocations: candidate.matchedLocations,
+              matchedIssues: candidate.matchedIssues,
+              matchedKeywords: candidate.matchedKeywords
+            }
             bestNote = note
           }
         })
@@ -1143,26 +1149,31 @@ async function matchPhotosToNotes(
         const STRONG_SECONDARY_SCORE = 1.2
         const WEAK_SECONDARY_SCORE = 0.35
 
-        if (bestNote && bestCandidate && bestCandidate.score >= STRONG_SECONDARY_SCORE) {
-          const assignment = assignmentById.get(bestNote.noteId)!
-          assignment.photoIds.push(photoId)
-          assignment.reasoning = appendReasoning(
-            assignment.reasoning,
-            `Secondary affinity match added photo ${photoId} (score ${bestCandidate.score.toFixed(2)})`
-          )
-          assignment.confidence = Math.min(0.9, assignment.confidence + Math.min(bestCandidate.score, 3) * 0.05)
-          leftoverPhotoIds.delete(photoId)
-          console.log(`   ➕ Added photo ${photoId} to note ${bestNote.noteId} via secondary affinity (score ${bestCandidate.score.toFixed(2)})`)
-        } else if (bestNote && bestCandidate && bestCandidate.score >= WEAK_SECONDARY_SCORE) {
-          const assignment = assignmentById.get(bestNote.noteId)!
-          assignment.photoIds.push(photoId)
-          assignment.reasoning = appendReasoning(
-            assignment.reasoning,
-            `Weak affinity match added photo ${photoId} (score ${bestCandidate.score.toFixed(2)})`
-          )
-          assignment.confidence = Math.min(0.85, assignment.confidence - 0.05 + Math.min(bestCandidate.score, 2) * 0.04)
-          leftoverPhotoIds.delete(photoId)
-          console.log(`   ➕ Added photo ${photoId} to note ${bestNote.noteId} via weak affinity (score ${bestCandidate.score.toFixed(2)})`)
+        if (bestNote !== null && bestCandidate !== null) {
+          const candidate = bestCandidate as AffinityCandidate
+          const note = bestNote as StructuredNote
+          
+          if (candidate.score >= STRONG_SECONDARY_SCORE) {
+            const assignment = assignmentById.get(note.noteId)!
+            assignment.photoIds.push(photoId)
+            assignment.reasoning = appendReasoning(
+              assignment.reasoning,
+              `Secondary affinity match added photo ${photoId} (score ${candidate.score.toFixed(2)})`
+            )
+            assignment.confidence = Math.min(0.9, assignment.confidence + Math.min(candidate.score, 3) * 0.05)
+            leftoverPhotoIds.delete(photoId)
+            console.log(`   ➕ Added photo ${photoId} to note ${note.noteId} via secondary affinity (score ${candidate.score.toFixed(2)})`)
+          } else if (candidate.score >= WEAK_SECONDARY_SCORE) {
+            const assignment = assignmentById.get(note.noteId)!
+            assignment.photoIds.push(photoId)
+            assignment.reasoning = appendReasoning(
+              assignment.reasoning,
+              `Weak affinity match added photo ${photoId} (score ${candidate.score.toFixed(2)})`
+            )
+            assignment.confidence = Math.min(0.85, assignment.confidence - 0.05 + Math.min(candidate.score, 2) * 0.04)
+            leftoverPhotoIds.delete(photoId)
+            console.log(`   ➕ Added photo ${photoId} to note ${note.noteId} via weak affinity (score ${candidate.score.toFixed(2)})`)
+          }
         } else {
           console.warn(`   ⚠️  Unable to find acceptable affinity for photo ${photoId}; leaving unassigned for review`)
         }
@@ -1196,7 +1207,8 @@ async function matchPhotosToNotes(
           })
 
           if (bestNote) {
-            const assignment = assignmentById.get(bestNote.noteId)!
+            const note = bestNote as StructuredNote
+            const assignment = assignmentById.get(note.noteId)!
             assignment.photoIds.push(photoId)
             assignment.reasoning = appendReasoning(
               assignment.reasoning,
@@ -1204,7 +1216,7 @@ async function matchPhotosToNotes(
             )
             assignment.confidence = Math.min(assignment.confidence, 0.75)
             leftoverPhotoIds.delete(photoId)
-            console.log(`   ➕ Forced fallback added photo ${photoId} to note ${bestNote.noteId} (score ${bestScore.toFixed(2)})`)
+            console.log(`   ➕ Forced fallback added photo ${photoId} to note ${note.noteId} (score ${bestScore.toFixed(2)})`)
           } else {
             console.warn(`   ⚠️  Photo ${photoId} could not be matched even after fallback; leaving for manual review`)
           }
@@ -1462,11 +1474,11 @@ Think step-by-step. Verify sentiment matching first. Ensure all ${photoMetadata.
       }
 
       const rawPhotoIds = Array.isArray(item?.photoIds) ? item.photoIds : []
-      const photoIds = Array.from(
+      const photoIds: number[] = Array.from(
         new Set(
           rawPhotoIds
             .map((value: any) => Number(value))
-            .filter(id => Number.isInteger(id) && id > 0)
+            .filter((id: number) => Number.isInteger(id) && id > 0)
         )
       )
 
