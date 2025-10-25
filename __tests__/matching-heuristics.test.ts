@@ -112,4 +112,123 @@ describe('matchPhotosToNotes affinity', () => {
     expect(assignmentMap.get(1)).toEqual([2])
     expect(assignmentMap.get(2)).toEqual([1])
   })
+
+  it('attaches leftover photos using secondary affinity', async () => {
+    const photos = [
+      {
+        photoId: 1,
+        location: 'Main corridor near signage',
+        equipment: [],
+        people: [],
+        safetyIssues: ['walkway blocked'],
+        conditions: ['indoor'],
+        confidence: 'high',
+        sentiment: 'problem',
+        originalName: 'photo1.jpg'
+      },
+      {
+        photoId: 2,
+        location: 'Cutting station',
+        equipment: ['signage'],
+        people: [],
+        safetyIssues: ['missing ppe'],
+        conditions: ['indoor'],
+        confidence: 'high',
+        sentiment: 'problem',
+        originalName: 'photo2.jpg'
+      },
+      {
+        photoId: 3,
+        location: 'Main corridor walkway',
+        equipment: [],
+        people: [],
+        safetyIssues: ['materials in walkway'],
+        conditions: ['indoor'],
+        confidence: 'medium',
+        sentiment: 'problem',
+        originalName: 'photo3.jpg'
+      }
+    ] as any
+
+    const notes = [
+      {
+        noteId: 1,
+        originalText: '1. Corridor: Materials stored in main corridor obstructing walkway.',
+        location: 'main corridor',
+        issueType: 'housekeeping',
+        keywords: ['materials', 'walkway', 'corridor'],
+        requiredElements: [],
+        isPositive: false
+      },
+      {
+        noteId: 2,
+        originalText: '2. Cutting station: Missing PPE signage.',
+        location: 'cutting station',
+        issueType: 'welding',
+        keywords: ['signage', 'ppe'],
+        requiredElements: [],
+        isPositive: false
+      }
+    ] as any
+
+    const assignments = await matchPhotosToNotes(photos, notes, 'test-key')
+
+    const map = new Map(assignments.map(a => [a.noteId, a.photoIds]))
+    expect(map.get(1)).toEqual(expect.arrayContaining([1, 3]))
+    expect(map.get(2)).toEqual([2])
+  })
+
+  it('forces fallback attachment when affinity scores are negligible', async () => {
+    const photos = [
+      {
+        photoId: 1,
+        location: 'Generic workspace',
+        equipment: [],
+        people: [],
+        safetyIssues: ['trip hazard'],
+        conditions: [],
+        confidence: 'medium',
+        sentiment: 'problem',
+        originalName: 'photo1.jpg'
+      },
+      {
+        photoId: 2,
+        location: 'Generic workspace',
+        equipment: [],
+        people: [],
+        safetyIssues: ['poor housekeeping'],
+        conditions: [],
+        confidence: 'medium',
+        sentiment: 'problem',
+        originalName: 'photo2.jpg'
+      },
+      {
+        photoId: 3,
+        location: 'Generic workspace',
+        equipment: [],
+        people: [],
+        safetyIssues: [],
+        conditions: [],
+        confidence: 'low',
+        sentiment: 'problem',
+        originalName: 'photo3.jpg'
+      }
+    ] as any
+
+    const notes = [
+      {
+        noteId: 1,
+        originalText: '1. Trip hazard noted in workspace.',
+        location: 'workspace',
+        issueType: 'housekeeping',
+        keywords: ['trip', 'hazard'],
+        requiredElements: [],
+        isPositive: false
+      }
+    ] as any
+
+    const assignments = await matchPhotosToNotes(photos, notes, 'test-key')
+    const map = new Map(assignments.map(a => [a.noteId, a.photoIds]))
+    expect(map.get(1)).toEqual(expect.arrayContaining([1, 2, 3]))
+  })
 })

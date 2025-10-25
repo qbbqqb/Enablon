@@ -1,6 +1,37 @@
 import type { Observation } from '../types'
 import type { Project } from '../constants/enums'
 
+/**
+ * Generate simple sequential photo filename with date and time
+ * Format: YYYYMMDD-HHMM-###.jpg
+ * 
+ * Example: 20251024-1430-001.jpg
+ * 
+ * @param date - Date object for the upload
+ * @param index - 1-based photo index (1, 2, 3...)
+ * @returns Filename like "20251024-1430-001.jpg"
+ */
+export function generateSimpleSequentialName(
+  date: Date,
+  index: number
+): string {
+  // Format date as YYYYMMDD
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const dateStr = `${year}${month}${day}`
+  
+  // Format time as HHMM
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const timeStr = `${hours}${minutes}`
+  
+  // Pad index to 3 digits (001, 002, ...)
+  const paddedIndex = String(index).padStart(3, '0')
+  
+  return `${dateStr}-${timeStr}-${paddedIndex}.jpg`
+}
+
 export function generatePhotoFilename(
   project: Project,
   obsNo: number,

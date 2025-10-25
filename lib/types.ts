@@ -40,6 +40,20 @@ export interface ProcessedImage {
   originalName: string
   buffer: Buffer
   mimeType: string
+  visualContent?: {
+    location: string
+    equipment: string[]
+    safetyIssues: string[]
+    sentiment: string
+  }
+  originalFilenameHints?: {
+    project?: string        // e.g., "GVX04", "GVX05"
+    location?: string       // e.g., "COLO", "Laydown", "Corridor"
+    primarySubject?: string // e.g., "MaterialStorage", "CuttingStation"
+    secondarySubject?: string // e.g., "ObstructedWalkway", "Unstable"
+    sentiment?: 'positive' | 'negative' | 'neutral' // e.g., "Positive" in filename
+    rawParts: string[]      // Original filename parts for debugging
+  }
 }
 
 export interface ManifestEntry {

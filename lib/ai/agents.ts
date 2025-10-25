@@ -37,6 +37,7 @@ interface PhotoMetadata {
   confidence: 'high' | 'medium' | 'low'
   sentiment: 'problem' | 'good_practice' | 'neutral' // Whether photo shows an issue or good practice
   originalName?: string
+  filenameHints?: ProcessedImage['originalFilenameHints'] // Metadata from structured filename
 }
 
 // Structured note from Agent 2
@@ -67,6 +68,7 @@ interface AffinityCandidate {
 }
 
 const AFFINITY_STRONG_THRESHOLD = 1.5
+const SCORE_IMPROVEMENT_MARGIN = 0.25
 
 function tokenize(text: string | undefined): string[] {
   if (!text) return []
@@ -129,6 +131,49 @@ function computeAffinityCandidate(
   noteProfile: ReturnType<typeof buildNoteProfile>,
   photoProfile: ReturnType<typeof buildPhotoProfile>
 ): AffinityCandidate | null {
+  // PHASE 1.5: Reject matches with critical filename hint mismatches
+  const hints = photo.filenameHints
+  if (hints) {
+    // CRITICAL REJECTION 1: Project code mismatch
+    if (hints.project) {
+      const noteText = note.originalText.toLowerCase()
+      const hintProject = hints.project.toLowerCase()
+      // Reject if note explicitly mentions a DIFFERENT project
+      const otherProjects = ['gvx03', 'gvx04', 'gvx05', 'gvx06'].filter(p => p !== hintProject)
+      const hasDifferentProject = otherProjects.some(p => noteText.includes(p))
+      if (hasDifferentProject) {
+        // Note mentions GVX04 but photo is GVX05 (or vice versa) - REJECT
+        return null
+      }
+    }
+    
+    // CRITICAL REJECTION 2: Sentiment mismatch with positive photos
+    // Positive photos should NEVER match negative observations
+    if (hints.sentiment === 'positive' && !note.isPositive) {
+      return null
+    }
+    
+    // CRITICAL REJECTION 3: Major location mismatch
+    // If filename clearly states a location, reject opposite locations
+    if (hints.location) {
+      const hintLoc = hints.location.toLowerCase()
+      const noteLoc = note.location.toLowerCase()
+      
+      // COLO vs Laydown are mutually exclusive
+      if ((hintLoc.includes('colo') && noteLoc.includes('laydown')) ||
+          (hintLoc.includes('laydown') && noteLoc.includes('colo'))) {
+        return null
+      }
+      
+      // Corridor vs External/Laydown are mutually exclusive
+      if ((hintLoc.includes('corridor') && (noteLoc.includes('external') || noteLoc.includes('laydown'))) ||
+          ((hintLoc.includes('external') || hintLoc.includes('laydown')) && noteLoc.includes('corridor'))) {
+        return null
+      }
+    }
+  }
+  
+  // Existing sentiment-based rejections
   if (note.isPositive && photo.sentiment === 'problem') {
     return null
   }
@@ -176,6 +221,58 @@ function computeAffinityCandidate(
     score += 0.3
   }
 
+  // PHASE 1.5: Boost affinity based on filename hints (INCREASED WEIGHTS)
+  const hintsForBoost = photo.filenameHints
+  if (hintsForBoost) {
+    // Project code match (2.5 boost) - CRITICAL signal
+    if (hintsForBoost.project) {
+      const noteText = note.originalText.toLowerCase()
+      if (noteText.includes(hintsForBoost.project.toLowerCase())) {
+        score += 2.5
+        locationMatches.add(`filename-project:${hintsForBoost.project}`)
+      }
+    }
+    
+    // Location match (2.0 boost) - VERY CRITICAL signal
+    if (hintsForBoost.location) {
+      const noteLocationLower = note.location.toLowerCase()
+      const hintLocationLower = hintsForBoost.location.toLowerCase()
+      if (noteLocationLower.includes(hintLocationLower) || hintLocationLower.includes(noteLocationLower)) {
+        score += 2.0
+        locationMatches.add(`filename-location:${hintsForBoost.location}`)
+      }
+    }
+    
+    // Sentiment match (1.5 boost for positive, 1.0 for negative) - Important signal
+    if (hintsForBoost.sentiment === 'positive' && note.isPositive) {
+      score += 1.5
+    } else if (hintsForBoost.sentiment === 'negative' && !note.isPositive) {
+      score += 1.0
+    }
+    
+    // Primary subject match (1.2 boost) - Strong signal
+    if (hintsForBoost.primarySubject) {
+      const noteText = note.originalText.toLowerCase()
+      const subjectTokens = tokenize(hintsForBoost.primarySubject)
+      const subjectMatchCount = subjectTokens.filter(token => noteText.includes(token)).length
+      if (subjectMatchCount > 0) {
+        score += Math.min(subjectMatchCount * 0.4, 1.2)
+        issueMatches.add(`filename-subject:${hintsForBoost.primarySubject}`)
+      }
+    }
+    
+    // Secondary subject match (0.8 boost) - Moderate signal
+    if (hintsForBoost.secondarySubject) {
+      const noteText = note.originalText.toLowerCase()
+      const subjectTokens = tokenize(hintsForBoost.secondarySubject)
+      const subjectMatchCount = subjectTokens.filter(token => noteText.includes(token)).length
+      if (subjectMatchCount > 0) {
+        score += Math.min(subjectMatchCount * 0.3, 0.8)
+        issueMatches.add(`filename-secondary:${hintsForBoost.secondarySubject}`)
+      }
+    }
+  }
+
   if (score <= 0) {
     return null
   }
@@ -217,6 +314,68 @@ function buildAffinityMap(
   })
 
   return affinity
+}
+
+function buildNoteProfileMap(notes: StructuredNote[]): Map<number, ReturnType<typeof buildNoteProfile>> {
+  const map = new Map<number, ReturnType<typeof buildNoteProfile>>()
+  notes.forEach(note => {
+    map.set(note.noteId, buildNoteProfile(note))
+  })
+  return map
+}
+
+function buildPhotoProfileMap(photos: PhotoMetadata[]): Map<number, ReturnType<typeof buildPhotoProfile>> {
+  const map = new Map<number, ReturnType<typeof buildPhotoProfile>>()
+  photos.forEach(photo => {
+    map.set(photo.photoId, buildPhotoProfile(photo))
+  })
+  return map
+}
+
+function scoreAssignments(
+  assignments: AssignmentWithReasoning[],
+  photoMetadata: PhotoMetadata[],
+  structuredNotes: StructuredNote[]
+): number {
+  const noteById = new Map(structuredNotes.map(note => [note.noteId, note]))
+  const photoById = new Map(photoMetadata.map(photo => [photo.photoId, photo]))
+  const noteProfiles = buildNoteProfileMap(structuredNotes)
+  const photoProfiles = buildPhotoProfileMap(photoMetadata)
+  const usedPhotos = new Set<number>()
+
+  let score = 0
+
+  assignments.forEach(assignment => {
+    const note = noteById.get(assignment.noteId)
+    if (!note) {
+      score -= 1
+      return
+    }
+    const noteProfile = noteProfiles.get(assignment.noteId)!
+
+    assignment.photoIds.forEach(photoId => {
+      const photo = photoById.get(photoId)
+      if (!photo) {
+        score -= 1
+        return
+      }
+      if (usedPhotos.has(photoId)) {
+        score -= 0.5
+      } else {
+        usedPhotos.add(photoId)
+      }
+
+      const photoProfile = photoProfiles.get(photoId)!
+      const candidate = computeAffinityCandidate(photo, note, noteProfile, photoProfile)
+      if (candidate) {
+        score += candidate.score
+      } else {
+        score -= 1
+      }
+    })
+  })
+
+  return score
 }
 
 // Photo name suggestion from Agent 5
@@ -302,7 +461,12 @@ Be precise. No speculation. Only what you see.`
 
   try {
     const metadata = JSON.parse(content)
-    return { photoId: index + 1, originalName: image.originalName, ...metadata }
+    return { 
+      photoId: index + 1, 
+      originalName: image.originalName, 
+      filenameHints: image.originalFilenameHints,
+      ...metadata 
+    }
   } catch (parseError) {
     console.warn(`   ⚠️  Failed to parse photo metadata JSON for photo ${index + 1}, attempting repair...`)
     try {
@@ -310,7 +474,12 @@ Be precise. No speculation. Only what you see.`
       const repaired = jsonrepair(content)
       const metadata = JSON.parse(repaired)
       console.log(`   ✓ Photo ${index + 1} JSON repaired successfully`)
-      return { photoId: index + 1, originalName: image.originalName, ...metadata }
+      return { 
+        photoId: index + 1, 
+        originalName: image.originalName, 
+        filenameHints: image.originalFilenameHints,
+        ...metadata 
+      }
     } catch (repairError) {
       console.error(`   ❌ Unable to repair photo metadata for photo ${index + 1}`)
       console.error('      Raw content (first 200 chars):', content.substring(0, 200))
@@ -848,6 +1017,8 @@ async function matchPhotosToNotes(
 
   if (notePattern === 'numbered') {
     console.log('   Using DIRECT MATCHING strategy (numbered notes with affinity boost)')
+    const noteProfiles = buildNoteProfileMap(structuredNotes)
+    const photoProfiles = buildPhotoProfileMap(photoMetadata)
     const affinityMap = buildAffinityMap(photoMetadata, structuredNotes)
     const assignedPhotos = new Set<number>()
 
@@ -926,6 +1097,120 @@ async function matchPhotosToNotes(
         leftoverPhotoIds.add(photo.photoId)
       }
     })
+
+    if (leftoverPhotoIds.size > 0) {
+      console.log(`   ⚠️  ${leftoverPhotoIds.size} photo(s) not yet assigned, attempting secondary affinity placement...`)
+      const photoById = new Map(photoMetadata.map(photo => [photo.photoId, photo]))
+      const noteById = new Map(structuredNotes.map(note => [note.noteId, note]))
+
+      Array.from(leftoverPhotoIds).forEach(photoId => {
+        const photo = photoById.get(photoId)
+        if (!photo) {
+          return
+        }
+        const photoProfile = photoProfiles.get(photoId) ?? buildPhotoProfile(photo)
+
+        let bestNote: StructuredNote | null = null
+        let bestCandidate: AffinityCandidate | null = null
+
+        structuredNotes.forEach(note => {
+          const assignment = assignmentById.get(note.noteId)
+          if (!assignment) {
+            return
+          }
+          if (assignment.photoIds.includes(photoId)) {
+            return
+          }
+
+          const candidate = computeAffinityCandidate(
+            photo,
+            note,
+            noteProfiles.get(note.noteId)!,
+            photoProfile
+          )
+          if (!candidate) {
+            return
+          }
+
+          const currentBestScore = bestCandidate?.score ?? -Infinity
+          const adjustedScore = candidate.score - (assignment.photoIds.length * 0.25)
+          if (adjustedScore > currentBestScore) {
+            bestCandidate = { ...candidate, score: adjustedScore }
+            bestNote = note
+          }
+        })
+
+        const STRONG_SECONDARY_SCORE = 1.2
+        const WEAK_SECONDARY_SCORE = 0.35
+
+        if (bestNote && bestCandidate && bestCandidate.score >= STRONG_SECONDARY_SCORE) {
+          const assignment = assignmentById.get(bestNote.noteId)!
+          assignment.photoIds.push(photoId)
+          assignment.reasoning = appendReasoning(
+            assignment.reasoning,
+            `Secondary affinity match added photo ${photoId} (score ${bestCandidate.score.toFixed(2)})`
+          )
+          assignment.confidence = Math.min(0.9, assignment.confidence + Math.min(bestCandidate.score, 3) * 0.05)
+          leftoverPhotoIds.delete(photoId)
+          console.log(`   ➕ Added photo ${photoId} to note ${bestNote.noteId} via secondary affinity (score ${bestCandidate.score.toFixed(2)})`)
+        } else if (bestNote && bestCandidate && bestCandidate.score >= WEAK_SECONDARY_SCORE) {
+          const assignment = assignmentById.get(bestNote.noteId)!
+          assignment.photoIds.push(photoId)
+          assignment.reasoning = appendReasoning(
+            assignment.reasoning,
+            `Weak affinity match added photo ${photoId} (score ${bestCandidate.score.toFixed(2)})`
+          )
+          assignment.confidence = Math.min(0.85, assignment.confidence - 0.05 + Math.min(bestCandidate.score, 2) * 0.04)
+          leftoverPhotoIds.delete(photoId)
+          console.log(`   ➕ Added photo ${photoId} to note ${bestNote.noteId} via weak affinity (score ${bestCandidate.score.toFixed(2)})`)
+        } else {
+          console.warn(`   ⚠️  Unable to find acceptable affinity for photo ${photoId}; leaving unassigned for review`)
+        }
+      })
+
+      if (leftoverPhotoIds.size > 0) {
+        console.warn(`   ⚠️  ${leftoverPhotoIds.size} photo(s) still unassigned after affinity pass, forcing fallback allocation...`)
+        Array.from(leftoverPhotoIds).forEach(photoId => {
+          const photo = photoById.get(photoId)
+          if (!photo) {
+            return
+          }
+          let bestNote: StructuredNote | null = null
+          let bestScore = -Infinity
+
+          structuredNotes.forEach(note => {
+            if ((note.isPositive && photo.sentiment === 'problem') || (!note.isPositive && photo.sentiment === 'good_practice')) {
+              return
+            }
+            const candidate = computeAffinityCandidate(
+              photo,
+              note,
+              noteProfiles.get(note.noteId)!,
+              photoProfiles.get(photoId)!
+            )
+            const adjustedScore = candidate ? candidate.score : 0
+            if (adjustedScore > bestScore) {
+              bestScore = adjustedScore
+              bestNote = note
+            }
+          })
+
+          if (bestNote) {
+            const assignment = assignmentById.get(bestNote.noteId)!
+            assignment.photoIds.push(photoId)
+            assignment.reasoning = appendReasoning(
+              assignment.reasoning,
+              `Fallback attachment added photo ${photoId} (score ${bestScore.toFixed(2)})`
+            )
+            assignment.confidence = Math.min(assignment.confidence, 0.75)
+            leftoverPhotoIds.delete(photoId)
+            console.log(`   ➕ Forced fallback added photo ${photoId} to note ${bestNote.noteId} (score ${bestScore.toFixed(2)})`)
+          } else {
+            console.warn(`   ⚠️  Photo ${photoId} could not be matched even after fallback; leaving for manual review`)
+          }
+        })
+      }
+    }
   } else {
     console.log('   Using BUCKETED AI MATCHING strategy (unnumbered notes)')
     structuredNotes.forEach(note => {
@@ -1167,25 +1452,71 @@ Think step-by-step. Verify sentiment matching first. Ensure all ${photoMetadata.
 
     const result = JSON.parse(content)
 
-    // Validate the corrected assignments
+    const correctedRaw = Array.isArray(result?.correctedAssignments) ? result.correctedAssignments : []
+    const sanitizedAssignmentsMap = new Map<number, AssignmentWithReasoning>()
+
+    correctedRaw.forEach((item: any) => {
+      const noteId = Number(item?.noteId)
+      if (!Number.isInteger(noteId) || noteId <= 0 || sanitizedAssignmentsMap.has(noteId)) {
+        return
+      }
+
+      const rawPhotoIds = Array.isArray(item?.photoIds) ? item.photoIds : []
+      const photoIds = Array.from(
+        new Set(
+          rawPhotoIds
+            .map((value: any) => Number(value))
+            .filter(id => Number.isInteger(id) && id > 0)
+        )
+      )
+
+      sanitizedAssignmentsMap.set(noteId, {
+        noteId,
+        photoIds,
+        reasoning: typeof item?.reasoning === 'string' && item.reasoning.trim().length > 0
+          ? item.reasoning.trim()
+          : 'Adjusted by verification step',
+        confidence: typeof item?.confidence === 'number' && item.confidence >= 0 && item.confidence <= 1
+          ? item.confidence
+          : 0.65
+      })
+    })
+
+    assignments.forEach(existing => {
+      if (!sanitizedAssignmentsMap.has(existing.noteId)) {
+        sanitizedAssignmentsMap.set(existing.noteId, existing)
+      }
+    })
+
+    const correctedAssignments = Array.from(sanitizedAssignmentsMap.values())
+
     const newValidation = validateAssignments(
-      result.correctedAssignments,
+      correctedAssignments,
       photoMetadata.length,
       structuredNotes.length
     )
 
-    if (newValidation.valid || newValidation.errors.length < validation.errors.length) {
+    const originalScore = scoreAssignments(assignments, photoMetadata, structuredNotes)
+    const correctedScore = scoreAssignments(correctedAssignments, photoMetadata, structuredNotes)
+
+    const errorsImproved = newValidation.errors.length < validation.errors.length
+    const warningsNotWorse = newValidation.warnings.length <= validation.warnings.length
+    const scoreImproved = correctedScore > originalScore + SCORE_IMPROVEMENT_MARGIN
+
+    console.log(`   📊 Verification score comparison → original: ${originalScore.toFixed(2)}, corrected: ${correctedScore.toFixed(2)}`)
+
+    if (errorsImproved || (scoreImproved && newValidation.errors.length <= validation.errors.length && warningsNotWorse)) {
       console.log('   ✅ Agent 3B fixed assignments:')
-      console.log(`      ${result.fixesApplied}`)
+      console.log(`      ${typeof result?.fixesApplied === 'string' ? result.fixesApplied : 'Improved assignment quality'}`)
       return {
-        assignments: result.correctedAssignments,
+        assignments: correctedAssignments,
         fixed: true,
-        reasoning: result.fixesApplied
+        reasoning: typeof result?.fixesApplied === 'string' ? result.fixesApplied : 'Improved assignment quality'
       }
-    } else {
-      console.warn('   ⚠️  Agent 3B corrections did not improve assignments, using original')
-      return { assignments, fixed: false, reasoning: 'Corrections did not improve quality' }
     }
+
+    console.warn('   ⚠️  Agent 3B corrections did not improve assignments, using original')
+    return { assignments, fixed: false, reasoning: 'Corrections did not improve quality' }
 
   } catch (error) {
     console.error('   ❌ Agent 3B verification error:', error)
@@ -1396,42 +1727,208 @@ async function generatePhotoNamesFromAssignments(
     const locationTokens = Array.from(deterministic.locationTokens).join(', ') || 'none'
     const issueTokens = Array.from(deterministic.issueTokens).join(', ') || 'none'
 
+    const visualLocation = ctx.metadata.location || 'unknown'
+    const obsLocationMatch = ctx.observation?.fullNote.match(/^([^:]+):/)
+    const obsLocation = obsLocationMatch ? obsLocationMatch[1].trim() : ''
+
+    const normalizedVisual = visualLocation.toLowerCase()
+    const normalizedObservation = obsLocation.toLowerCase()
+    let locationMatch = false
+    if (normalizedVisual && normalizedObservation) {
+      locationMatch = normalizedVisual.includes(normalizedObservation) || normalizedObservation.includes(normalizedVisual)
+    }
+
     return `Photo ${ctx.photoId}:
-  Sentiment: ${ctx.metadata.sentiment}
-  Observation: "${obsText}"
-  Location: ${ctx.metadata.location || 'unknown'}
-  Safety issues: ${safety}
-  Equipment: ${equipment}
-  People: ${people}
-  Conditions: ${conditions}
+  VISUAL ANALYSIS (what the photo actually shows):
+    Location: ${visualLocation}
+    Equipment: ${equipment}
+    Safety Issues: ${safety}
+    Sentiment: ${ctx.metadata.sentiment}
+    People: ${people}
+    Conditions: ${conditions}
+
+  ASSIGNED OBSERVATION:
+    Note: "${obsText}"
+    Observation Location Hint: ${obsLocation || 'unknown'}
+    Location Match: ${locationMatch ? 'YES - locations align' : 'NO - possible mismatch'}
+
+  NAMING PRIORITY:
+    ${locationMatch ? 'Use observation context (visual and assignment align).' : 'PRIORITIZE visual analysis (possible reassignment mismatch).'}
+
   Deterministic slug: ${deterministic.slug}
   Location tokens: ${locationTokens}
   Issue tokens: ${issueTokens}`
   }).join('\n\n')
 
-  const prompt = `You generate final filenames for construction photos.
+  const prompt = `You generate final filenames for construction safety photos.
 
-For EACH photo, output a SINGLE kebab-case slug with 3-5 tokens capturing:
-- Location or area token
-- Issue or positive highlight token
-- Key object/equipment token
-Use the provided deterministic slug as a backbone. You may refine tokens for clarity, but keep them factual.
+═══════════════════════════════════════════════════════════════════
+CRITICAL NAMING RULES
+═══════════════════════════════════════════════════════════════════
 
-STRICT RULES:
-1. Lowercase letters/numbers only, separated by hyphens.
-2. At least 3 tokens, maximum 5.
-3. Include one token from the location tokens list when possible.
-4. Include one token from the issue tokens list when possible.
-5. Avoid generic results like "photo", "positive-observation", "site" alone.
-6. Do not invent locations or issues not present in the context.
+1. ACCURACY: The filename MUST describe what is VISUALLY PRESENT in the photo.
+2. LOCATION PRIORITY: When "Location Match" = NO, USE VISUAL ANALYSIS ONLY (ignore observation text).
+3. CONTEXT INTEGRATION: When "Location Match" = YES, you may blend visual + observation details.
+4. LENGTH: Exactly 3-5 tokens in kebab-case (e.g., "outdoor-scaffold-missing-guardrail").
+5. SPECIFICITY: Use concrete equipment/issue names, not generic words like "area", "site", "item".
 
-PHOTO CONTEXTS:
+═══════════════════════════════════════════════════════════════════
+TOKEN SELECTION HIERARCHY (Priority Order)
+═══════════════════════════════════════════════════════════════════
+
+Select tokens in this order:
+
+1. LOCATION TOKEN (mandatory, always first):
+   ✓ GOOD: "outdoor", "indoor", "stairwell", "corridor", "laydown"
+   ✗ BAD: "area", "site", "location", "place"
+
+2. PRIMARY EQUIPMENT/OBJECT (from visual analysis):
+   ✓ GOOD: "scaffold", "ladder", "cables", "materials", "forklift"
+   ✗ BAD: "equipment", "thing", "item", "object"
+
+3. SAFETY ISSUE/CONDITION (prioritize severity):
+   ✓ GOOD: "missing-guardrail", "unsecured", "blocked-exit", "exposed-wires"
+   ✗ BAD: "problem", "issue", "concern", "hazard" (alone)
+
+4. SECONDARY DETAIL (if needed for clarity):
+   ✓ GOOD: "walkway", "storage", "access", "egress"
+
+═══════════════════════════════════════════════════════════════════
+NAMING STRATEGY BY SCENARIO
+═══════════════════════════════════════════════════════════════════
+
+SCENARIO A: Location Match = YES (Visual and Observation Align)
+→ Combine visual details + observation context
+
+Example 1:
+  Visual: "outdoor area with pallets"
+  Observation: "Outdoor materials blocking walkway"
+  ✓ GOOD: "outdoor-materials-blocking-walkway"
+  ✗ BAD: "outdoor-pallets-area" (missing the blocking issue from observation)
+
+Example 2:
+  Visual: "stairwell with ladder"
+  Observation: "Stairwell ladder not secured properly"
+  ✓ GOOD: "stairwell-ladder-unsecured"
+  ✗ BAD: "stairs-ladder-safety" (too generic, missing specific issue)
+
+SCENARIO B: Location Match = NO (Reassignment Mismatch)
+→ USE VISUAL ANALYSIS ONLY, completely ignore observation text
+
+Example 3:
+  Visual: "outdoor laydown area with steel beams"
+  Observation: "Indoor corridor cable management issue" (WRONG LOCATION!)
+  ✓ GOOD: "outdoor-steel-beams-storage"
+  ✗ BAD: "indoor-corridor-cables" (copied from observation, not visual!)
+
+Example 4:
+  Visual: "indoor office space with exposed wires"
+  Observation: "Outdoor scaffold missing guardrail" (WRONG LOCATION!)
+  ✓ GOOD: "indoor-office-exposed-wires"
+  ✗ BAD: "outdoor-scaffold-guardrail" (completely wrong!)
+
+═══════════════════════════════════════════════════════════════════
+EDGE CASE HANDLING
+═══════════════════════════════════════════════════════════════════
+
+CASE 1: Multiple Equipment Items
+→ Choose the most safety-critical or prominent item
+
+Visual: "scaffold with ladder and missing guardrail"
+✓ GOOD: "outdoor-scaffold-missing-guardrail" (focus on safety issue)
+✗ BAD: "outdoor-scaffold-ladder-guardrail" (too many details)
+
+CASE 2: Ambiguous Location
+→ Use the most specific location term from visual analysis
+
+Visual: "indoor corridor near stairwell exit"
+✓ GOOD: "corridor-exit-blocked-materials"
+✗ BAD: "indoor-area-materials" (too generic)
+
+CASE 3: No Clear Safety Issue
+→ Focus on condition or state of equipment
+
+Visual: "outdoor laydown area with organized materials"
+✓ GOOD: "outdoor-materials-proper-storage"
+✗ BAD: "outdoor-materials-area" (missing condition detail)
+
+CASE 4: Positive Observations (Good Practices)
+→ Use positive descriptors
+
+Visual: "scaffold with all safety equipment present"
+✓ GOOD: "outdoor-scaffold-proper-setup"
+✗ BAD: "outdoor-scaffold-compliant" (too formal)
+
+═══════════════════════════════════════════════════════════════════
+COMMON MISTAKES TO AVOID
+═══════════════════════════════════════════════════════════════════
+
+❌ MISTAKE 1: Using observation text when Location Match = NO
+   Wrong: "indoor-corridor-cables" (from observation)
+   Right: "outdoor-laydown-materials" (from visual)
+
+❌ MISTAKE 2: Generic token spam
+   Wrong: "outdoor-area-item-issue"
+   Right: "outdoor-scaffold-missing-guardrail"
+
+❌ MISTAKE 3: Too many tokens (>5)
+   Wrong: "outdoor-laydown-area-materials-storage-blocking-walkway"
+   Right: "outdoor-materials-blocking-walkway"
+
+❌ MISTAKE 4: Missing location token
+   Wrong: "scaffold-missing-guardrail"
+   Right: "outdoor-scaffold-missing-guardrail"
+
+❌ MISTAKE 5: Using abbreviations
+   Wrong: "ext-scaff-no-guard"
+   Right: "outdoor-scaffold-missing-guardrail"
+
+❌ MISTAKE 6: Duplicating information
+   Wrong: "outdoor-outside-scaffold-scaffolding"
+   Right: "outdoor-scaffold-setup"
+
+═══════════════════════════════════════════════════════════════════
+PHOTO CONTEXTS
+═══════════════════════════════════════════════════════════════════
+
 ${contextBlocks}
 
-Return ONLY JSON:
+═══════════════════════════════════════════════════════════════════
+VALIDATION CHECKLIST (Verify Each Name)
+═══════════════════════════════════════════════════════════════════
+
+Before finalizing each name, verify:
+
+✓ Location token is from VISUAL ANALYSIS location field
+✓ Equipment/object token is from VISUAL ANALYSIS equipment field
+✓ If Location Match = NO → name uses ONLY visual analysis (0% observation)
+✓ If Location Match = YES → name blends visual + observation appropriately
+✓ Exactly 3-5 tokens in kebab-case
+✓ No generic words used alone ("area", "site", "item", "thing", "hazard")
+✓ No abbreviations or acronyms
+✓ Name describes what someone would SEE in the photo
+✓ Reasoning explains token choices and location match handling
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════════════════════
+
+Return ONLY valid JSON array (no markdown, no extra text):
+
 [
-  {"photoId": 3, "suggestedName": "colo3-trip-hazard-cable", "reasoning": "Uses location, issue, object tokens"}
-]`
+  {
+    "photoId": 1,
+    "suggestedName": "outdoor-scaffold-missing-guardrail",
+    "reasoning": "Visual shows outdoor scaffold with missing guardrail. Location match=YES. Used visual location + equipment + safety issue from observation."
+  },
+  {
+    "photoId": 2,
+    "suggestedName": "indoor-corridor-exposed-cables",
+    "reasoning": "Visual shows indoor corridor with exposed electrical cables. Location match=NO (obs mentions outdoor). Used ONLY visual analysis, ignored observation text."
+  }
+]
+
+Generate names now:`
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 180000)
@@ -1543,12 +2040,45 @@ Return ONLY JSON:
     console.warn(`
 ⚠️  Naming validation detected ${problematic.length} items to fix`)
 
-    const retryPrompt = `Some of your filenames missed required constraints. Rewrite ONLY the problematic entries below.
-Each output MUST follow:
-- 3-5 tokens in kebab-case
-- Include at least one provided location token
-- Include at least one provided issue token
-- Keep details factual
+    const retryPrompt = `VALIDATION FAILED - Fix these photo names immediately.
+
+═══════════════════════════════════════════════════════════════════
+CRITICAL REQUIREMENTS (All MUST be satisfied)
+═══════════════════════════════════════════════════════════════════
+
+1. LENGTH: Exactly 3-5 tokens, kebab-case (e.g., "outdoor-scaffold-missing-guardrail")
+2. LOCATION: Must include at least ONE location token from the provided list
+3. ISSUE: Must include at least ONE issue/equipment token from the provided list
+4. SPECIFICITY: No generic words ("area", "site", "item", "thing", "hazard" alone)
+5. ACCURACY: Name must describe what's visually present in the photo
+
+═══════════════════════════════════════════════════════════════════
+COMMON FIXES
+═══════════════════════════════════════════════════════════════════
+
+Problem: Too few tokens (< 3)
+  ✗ BAD: "outdoor-scaffold"
+  ✓ FIXED: "outdoor-scaffold-missing-guardrail"
+
+Problem: Missing location token
+  ✗ BAD: "scaffold-damaged-platform"
+  ✓ FIXED: "outdoor-scaffold-damaged-platform"
+
+Problem: Missing issue token
+  ✗ BAD: "outdoor-construction-area"
+  ✓ FIXED: "outdoor-materials-blocking-walkway"
+
+Problem: Too generic
+  ✗ BAD: "outdoor-area-issue"
+  ✓ FIXED: "outdoor-laydown-unsecured-materials"
+
+Problem: Too many tokens (> 5)
+  ✗ BAD: "outdoor-scaffold-area-missing-guardrail-safety-hazard"
+  ✓ FIXED: "outdoor-scaffold-missing-guardrail"
+
+═══════════════════════════════════════════════════════════════════
+PHOTOS REQUIRING FIXES
+═══════════════════════════════════════════════════════════════════
 
 ${problematic.map(([photoId, info]) => {
   const deterministic = deterministicByPhoto.get(photoId)!
@@ -1556,15 +2086,31 @@ ${problematic.map(([photoId, info]) => {
   const issueTokens = Array.from(deterministic.issueTokens).join(', ') || 'none'
   const reasons = info.reasons.map(r => `    - ${r}`).join('\n')
   return `Photo ${photoId}:
-  Previous name: "${info.name}"
-  Deterministic slug: ${deterministic.slug}
-  Location tokens: ${locationTokens}
-  Issue tokens: ${issueTokens}
-  Problems:
-${reasons}`
+  ❌ Previous name: "${info.name}"
+  
+  Available location tokens: ${locationTokens}
+  Available issue tokens: ${issueTokens}
+  Suggested base: ${deterministic.slug}
+  
+  Validation errors:
+${reasons}
+  
+  Instructions: Choose tokens from the available lists above, combine into 3-5 token name.`
 }).join('\n\n')}
 
-Return ONLY JSON array of fixes: [{"photoId": 4, "suggestedName": "...", "reasoning": "..."}]`
+═══════════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════════════════════
+
+Return ONLY valid JSON array (no markdown):
+
+[
+  {
+    "photoId": 4,
+    "suggestedName": "outdoor-scaffold-missing-guardrail",
+    "reasoning": "Fixed: Added location token 'outdoor', kept equipment 'scaffold', added issue 'missing-guardrail'. Total 4 tokens."
+  }
+]`
 
     try {
       const retryResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -1616,7 +2162,20 @@ Return ONLY JSON array of fixes: [{"photoId": 4, "suggestedName": "...", "reason
   suggestions.forEach(s => {
     const ctx = photoContexts.find(c => c.photoId === s.photoId)
     const obsText = ctx?.observation?.fullNote || 'No observation'
-    console.log(`   Photo ${s.photoId}: "${s.suggestedName}"`)
+    const visualLoc = ctx?.metadata.location || 'unknown'
+
+    const nameTokens = s.suggestedName.toLowerCase().split('-').filter(Boolean)
+    const visualTokens = visualLoc.toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length > 2)
+    const hasVisualLocation = visualTokens.length === 0
+      ? true
+      : visualTokens.some(vToken => nameTokens.some(nToken => nToken.includes(vToken) || vToken.includes(nToken)))
+
+    const warning = hasVisualLocation
+      ? '✓'
+      : '⚠️ NAME MAY NOT MATCH VISUAL CONTENT'
+
+    console.log(`   Photo ${s.photoId}: "${s.suggestedName}" ${warning}`)
+    console.log(`      Visual Location: "${visualLoc}"`)
     console.log(`      Observation: "${obsText.substring(0, 100)}..."`)
     console.log(`      AI Reasoning: ${s.reasoning}`)
   })
@@ -2005,6 +2564,80 @@ function limitSlug(slug: string, maxLength = 60): string {
 }
 
 // Main Orchestrator
+/**
+ * Extract metadata hints from structured original filenames
+ * Examples:
+ *   GVX05_COLO_MaterialStorage_ObstructedWalkway.jpg
+ *   GVX04_Laydown_UnstableStackedWood.jpg
+ *   GVX05_Positive_CuttingStation.jpg
+ */
+function extractFilenameHints(filename: string): ProcessedImage['originalFilenameHints'] {
+  // Remove file extension
+  const nameWithoutExt = filename.replace(/\.(jpg|jpeg|png|heic)$/i, '')
+  
+  // Split by underscore
+  const parts = nameWithoutExt.split('_').filter(p => p.length > 0)
+  
+  if (parts.length === 0) {
+    return { rawParts: [] }
+  }
+  
+  const hints: ProcessedImage['originalFilenameHints'] = {
+    rawParts: parts
+  }
+  
+  // Extract project code (GVX04, GVX05, etc.)
+  const projectPattern = /^(GVX\d{2})$/i
+  if (parts[0] && projectPattern.test(parts[0])) {
+    hints.project = parts[0].toUpperCase()
+  }
+  
+  // Extract location (COLO, Laydown, Corridor, External, etc.)
+  const locationKeywords = [
+    'colo', 'laydown', 'corridor', 'external', 'entrance', 
+    'stairwell', 'electrical', 'warehouse', 'office'
+  ]
+  const locationPart = parts.find(p => 
+    locationKeywords.some(kw => p.toLowerCase().includes(kw))
+  )
+  if (locationPart) {
+    hints.location = locationPart
+  }
+  
+  // Extract sentiment (Positive)
+  const sentimentPart = parts.find(p => p.toLowerCase() === 'positive')
+  if (sentimentPart) {
+    hints.sentiment = 'positive'
+  }
+  
+  // Extract primary subject (usually after location)
+  // Skip project and location parts
+  const nonMetaParts = parts.filter(p => 
+    p !== hints.project && 
+    p !== locationPart && 
+    p !== sentimentPart
+  )
+  
+  if (nonMetaParts.length > 0) {
+    hints.primarySubject = nonMetaParts[0]
+  }
+  
+  if (nonMetaParts.length > 1) {
+    hints.secondarySubject = nonMetaParts[1]
+  }
+  
+  // If no explicit sentiment but filename contains negative indicators
+  if (!hints.sentiment) {
+    const negativeKeywords = ['unstable', 'missing', 'blocked', 'unsecured', 'poor', 'expired', 'hazard', 'trip']
+    const hasNegative = parts.some(p => 
+      negativeKeywords.some(kw => p.toLowerCase().includes(kw))
+    )
+    hints.sentiment = hasNegative ? 'negative' : 'neutral'
+  }
+  
+  return hints
+}
+
 export async function orchestratePhotoAssignment(
   images: ProcessedImage[],
   observationShells: ObservationShell[]
@@ -2013,6 +2646,25 @@ export async function orchestratePhotoAssignment(
   console.log(`   Images: ${images.length}, Observations: ${observationShells.length}`)
 
   const apiKey = process.env.OPENROUTER_API_KEY!
+  
+  // Step 0: Extract filename hints for affinity boosting
+  console.log('📋 Extracting filename metadata...')
+  images.forEach((image) => {
+    image.originalFilenameHints = extractFilenameHints(image.originalName)
+  })
+  const imagesWithHints = images.filter(img => 
+    img.originalFilenameHints && 
+    (img.originalFilenameHints.project || img.originalFilenameHints.location)
+  ).length
+  console.log(`   ✓ Extracted hints from ${imagesWithHints}/${images.length} filenames`)
+  
+  // Log sample hints
+  images.slice(0, 3).forEach((img, idx) => {
+    const hints = img.originalFilenameHints
+    if (hints && (hints.project || hints.location)) {
+      console.log(`      Photo ${idx + 1}: ${hints.project || '?'} | ${hints.location || '?'} | ${hints.primarySubject || '?'}`)
+    }
+  })
 
   // Step 1: Analyze all photos in parallel
   console.log('🔍 Agent 1: Analyzing photos...')
@@ -2020,6 +2672,21 @@ export async function orchestratePhotoAssignment(
     images.map((img, idx) => analyzePhoto(img, idx))
   )
   console.log(`   ✓ Analyzed ${photoMetadata.length} photos`)
+
+  // Preserve visual analysis for downstream naming logic
+  images.forEach((image, idx) => {
+    const metadata = photoMetadata[idx]
+    if (!metadata) {
+      return
+    }
+
+    image.visualContent = {
+      location: metadata.location,
+      equipment: Array.isArray(metadata.equipment) ? metadata.equipment : [],
+      safetyIssues: Array.isArray(metadata.safetyIssues) ? metadata.safetyIssues : [],
+      sentiment: metadata.sentiment
+    }
+  })
 
   // Log sentiment analysis (first 5 photos)
   console.log('   Sentiment analysis:')
@@ -2070,6 +2737,64 @@ export async function orchestratePhotoAssignment(
     }
   } else {
     console.log('🔍 Step 3B: Skipped (assignments already consistent)')
+  }
+  
+  // PHASE 1 QUICK WIN: Validate assignments against filename hints
+  console.log('📋 Validating assignments against filename metadata...')
+  let mismatchCount = 0
+  let matchCount = 0
+  
+  assignmentsWithReasoning.forEach(assignment => {
+    const note = structuredNotes.find(n => n.noteId === assignment.noteId)
+    if (!note) return
+    
+    assignment.photoIds.forEach(photoId => {
+      const photo = photoMetadata.find(p => p.photoId === photoId)
+      if (!photo || !photo.filenameHints) return
+      
+      const hints = photo.filenameHints
+      const issues: string[] = []
+      
+      // Check project mismatch
+      if (hints.project) {
+        const noteText = note.originalText.toLowerCase()
+        if (!noteText.includes(hints.project.toLowerCase())) {
+          issues.push(`project:${hints.project}`)
+        }
+      }
+      
+      // Check location mismatch
+      if (hints.location) {
+        const noteLocationLower = note.location.toLowerCase()
+        const hintLocationLower = hints.location.toLowerCase()
+        if (!noteLocationLower.includes(hintLocationLower) && !hintLocationLower.includes(noteLocationLower)) {
+          issues.push(`location:${hints.location}`)
+        }
+      }
+      
+      // Check sentiment mismatch
+      if (hints.sentiment === 'positive' && !note.isPositive) {
+        issues.push('sentiment:positive→negative')
+      } else if (hints.sentiment === 'negative' && note.isPositive) {
+        issues.push('sentiment:negative→positive')
+      }
+      
+      if (issues.length > 0) {
+        mismatchCount++
+        console.warn(`   ⚠️  Photo ${photoId} (${photo.originalName}) → Note ${assignment.noteId}`)
+        console.warn(`       Filename suggests: ${hints.project || '?'} | ${hints.location || '?'} | ${hints.sentiment || '?'}`)
+        console.warn(`       Observation: ${note.location} | ${note.isPositive ? 'positive' : 'negative'}`)
+        console.warn(`       Mismatches: ${issues.join(', ')}`)
+      } else {
+        matchCount++
+      }
+    })
+  })
+  
+  const totalWithHints = photoMetadata.filter(p => p.filenameHints && (p.filenameHints.project || p.filenameHints.location)).length
+  if (totalWithHints > 0) {
+    const matchRate = ((matchCount / totalWithHints) * 100).toFixed(0)
+    console.log(`   ✓ Filename validation: ${matchCount}/${totalWithHints} photos match (${matchRate}%), ${mismatchCount} mismatches detected`)
   }
 
   // Step 4: Final validation
@@ -2244,8 +2969,10 @@ export async function orchestratePhotoAssignment(
     }
   })
 
-  const photoNames = await generatePhotoNamesFromAssignments(enrichedPhotoContexts, images, apiKey)
-  console.log(`   ✓ Generated ${Object.keys(photoNames).length} photo names`)
+  // SKIPPED: Agent 5 photo naming (using simple sequential naming instead)
+  // Photos are now named with simple date-time-number format (e.g., 20251024-1430-001.jpg)
+  const photoNames = {}  // Empty - not used with simple sequential naming
+  console.log('   ⏭️  Skipped Agent 5: Using simple sequential naming (YYYYMMDD-HHMM-###.jpg)')
 
   console.log('🎭 Orchestration complete!')
 

@@ -32,7 +32,7 @@ const createImage = (originalIndex: number, originalName: string): ProcessedImag
 })
 
 describe('createZipStream photo naming', () => {
-  it('builds observation-driven filenames with per-observation suffixes', () => {
+  it('builds simple sequential filenames (YYYYMMDD-HHMM-###.jpg)', () => {
     const observation1 = createObservation({
       __photoIndices: [1, 2]
     })
@@ -70,18 +70,23 @@ describe('createZipStream photo naming', () => {
     })
 
     expect(manifest).toHaveLength(3)
-    expect(manifest[0].renamedFilename).toBe(
-      'GVX04-OBS001-20250115-damaged-cable-1.jpg'
-    )
-    expect(manifest[1].renamedFilename).toBe(
-      'GVX04-OBS001-20250115-damaged-cable-second-2.jpg'
-    )
-    expect(manifest[2].renamedFilename).toBe(
-      'GVX03-OBS002-20250116-ppe-compliance.jpg'
-    )
+    // Simple sequential naming: YYYYMMDD-HHMM-###.jpg
+    expect(manifest[0].renamedFilename).toMatch(/^\d{8}-\d{4}-001\.jpg$/)
+    expect(manifest[1].renamedFilename).toMatch(/^\d{8}-\d{4}-002\.jpg$/)
+    expect(manifest[2].renamedFilename).toMatch(/^\d{8}-\d{4}-003\.jpg$/)
+    
+    // All photos have rowNumber 0 (not tied to observation rows)
+    expect(manifest[0].rowNumber).toBe(0)
+    expect(manifest[1].rowNumber).toBe(0)
+    expect(manifest[2].rowNumber).toBe(0)
+    
+    // Original filenames preserved in manifest
+    expect(manifest[0].originalFilename).toBe('IMG_0001.JPG')
+    expect(manifest[1].originalFilename).toBe('IMG_0002.JPG')
+    expect(manifest[2].originalFilename).toBe('IMG_0003.JPG')
   })
 
-  it('falls back gracefully when no observation mapping exists', () => {
+  it('includes all photos regardless of observation mapping', () => {
     const observation = createObservation({
       __photoIndices: [1]
     })
@@ -97,7 +102,10 @@ describe('createZipStream photo naming', () => {
     })
 
     expect(manifest).toHaveLength(2)
-    expect(manifest[1].renamedFilename).toMatch(/^GVX04-OBS000-\d{8}-extra\.jpg$/)
+    // Second photo gets sequential naming
+    expect(manifest[1].renamedFilename).toMatch(/^\d{8}-\d{4}-002\.jpg$/)
     expect(manifest[1].rowNumber).toBe(0)
+    expect(manifest[1].originalFilename).toBe('extra-photo.jpg')
+    expect(manifest[1].observationDescription).toBe('Photo included in batch upload')
   })
 })
